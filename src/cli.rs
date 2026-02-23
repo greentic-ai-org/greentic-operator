@@ -44,6 +44,7 @@ use crate::project::{self, ScanFormat};
 use crate::runner_exec;
 use crate::runner_integration;
 use crate::runtime_state::RuntimePaths;
+use crate::capabilities::ResolveScope;
 use crate::secrets_gate::{self, DynSecretsManager, SecretsManagerHandle};
 use crate::secrets_manager;
 use crate::secrets_setup::resolve_env;
@@ -144,6 +145,8 @@ enum DemoSubcommand {
     Forbid(DemoPolicyArgs),
     #[command(about = "Manage demo subscriptions via provider components")]
     Subscriptions(DemoSubscriptionsCommand),
+    #[command(about = "Manage capability resolution/invocation in demo bundles")]
+    Capability(DemoCapabilityCommand),
     #[command(about = "Run a pack/flow with inline input")]
     Run(DemoRunArgs),
     #[command(about = "List resolved packs from a bundle")]
@@ -948,6 +951,94 @@ struct DemoSubscriptionsCommand {
 
 #[derive(Parser)]
 #[command(
+    about = "Manage capabilities in a demo bundle.",
+    long_about = "Resolve, invoke, and mark setup status for capability offers."
+)]
+struct DemoCapabilityCommand {
+    #[command(subcommand)]
+    command: DemoCapabilitySubcommand,
+}
+
+#[derive(Subcommand)]
+enum DemoCapabilitySubcommand {
+    Invoke(DemoCapabilityInvokeArgs),
+    SetupPlan(DemoCapabilitySetupPlanArgs),
+    MarkReady(DemoCapabilityMarkReadyArgs),
+    MarkFailed(DemoCapabilityMarkFailedArgs),
+}
+
+#[derive(Parser)]
+#[command(
+    about = "Resolve and invoke a capability provider op.",
+    long_about = "Uses capability registry resolution and routes to the selected provider op."
+)]
+struct DemoCapabilityInvokeArgs {
+    #[arg(long)]
+    bundle: PathBuf,
+    #[arg(long)]
+    cap_id: String,
+    #[arg(long, default_value = "")]
+    op: String,
+    #[arg(long)]
+    payload_json: Option<String>,
+    #[arg(long, default_value = "demo")]
+    tenant: String,
+    #[arg(long, default_value = "default")]
+    team: String,
+    #[arg(long)]
+    env: Option<String>,
+}
+
+#[derive(Parser)]
+#[command(
+    about = "Print capabilities that require setup.",
+    long_about = "Builds capability setup plan for current tenant/team scope."
+)]
+struct DemoCapabilitySetupPlanArgs {
+    #[arg(long)]
+    bundle: PathBuf,
+    #[arg(long, default_value = "demo")]
+    tenant: String,
+    #[arg(long, default_value = "default")]
+    team: String,
+}
+
+#[derive(Parser)]
+#[command(
+    about = "Mark resolved capability as setup-ready.",
+    long_about = "Writes capability install record with ready status for the selected capability."
+)]
+struct DemoCapabilityMarkReadyArgs {
+    #[arg(long)]
+    bundle: PathBuf,
+    #[arg(long)]
+    cap_id: String,
+    #[arg(long, default_value = "demo")]
+    tenant: String,
+    #[arg(long, default_value = "default")]
+    team: String,
+}
+
+#[derive(Parser)]
+#[command(
+    about = "Mark resolved capability as setup-failed.",
+    long_about = "Writes capability install record with failed status for the selected capability."
+)]
+struct DemoCapabilityMarkFailedArgs {
+    #[arg(long)]
+    bundle: PathBuf,
+    #[arg(long)]
+    cap_id: String,
+    #[arg(long, default_value = "setup_failed")]
+    key: String,
+    #[arg(long, default_value = "demo")]
+    tenant: String,
+    #[arg(long, default_value = "default")]
+    team: String,
+}
+
+#[derive(Parser)]
+#[command(
     about = "Run a pack/flow with inline input.",
     long_about = "Resolves the selected pack, picks the requested or default flow, parses any provided input, and prints a run summary."
 )]
@@ -1095,6 +1186,17 @@ impl DemoSubscriptionsCommand {
             DemoSubscriptionsSubcommand::Status(args) => args.run(),
             DemoSubscriptionsSubcommand::Renew(args) => args.run(),
             DemoSubscriptionsSubcommand::Delete(args) => args.run(),
+        }
+    }
+}
+
+impl DemoCapabilityCommand {
+    fn run(self) -> anyhow::Result<()> {
+        match self.command {
+            DemoCapabilitySubcommand::Invoke(args) => args.run(),
+            DemoCapabilitySubcommand::SetupPlan(args) => args.run(),
+            DemoCapabilitySubcommand::MarkReady(args) => args.run(),
+            DemoCapabilitySubcommand::MarkFailed(args) => args.run(),
         }
     }
 }
@@ -1510,6 +1612,167 @@ impl DemoSubscriptionsDeleteArgs {
     }
 }
 
+impl DemoCapabilityInvokeArgs {
+    fn run(self) -> anyhow::Result<()> {
+        if let Some(env_value) = self.env.as_ref() {
+            // set_var is unsafe in this codebase, so wrap it accordingly.
+            unsafe {
+                env::set_var("GREENTIC_ENV", env_value);
+            }
+        }
+        domains::ensure_cbor_packs(&self.bundle)?;
+        let discovery = discovery::discover_with_options(
+            &self.bundle,
+            discovery::DiscoveryOptions { cbor_only: true },
+        )?;
+        let secrets_handle =
+            secrets_gate::resolve_secrets_manager(&self.bundle, &self.tenant, Some(&self.team))?;
+        let runner_host = DemoRunnerHost::new(
+            self.bundle.clone(),
+            &discovery,
+            None,
+            secrets_handle,
+            false,
+        )?;
+        let ctx = OperatorContext {
+            tenant: self.tenant.clone(),
+            team: Some(self.team.clone()),
+            correlation_id: None,
+        };
+        let payload_value = if let Some(raw) = self.payload_json.as_ref() {
+            serde_json::from_str::<JsonValue>(raw)
+                .map_err(|err| anyhow!("invalid --payload-json: {err}"))?
+        } else {
+            json!({})
+        };
+        let payload_bytes = serde_json::to_vec(&payload_value)?;
+        let outcome = runner_host.invoke_capability(&self.cap_id, &self.op, &payload_bytes, &ctx)?;
+        print_capability_outcome(&outcome)?;
+        if !outcome.success {
+            anyhow::bail!(
+                "capability invoke failed cap_id={} op={}",
+                self.cap_id,
+                if self.op.is_empty() {
+                    "<binding-default>"
+                } else {
+                    self.op.as_str()
+                }
+            );
+        }
+        Ok(())
+    }
+}
+
+impl DemoCapabilitySetupPlanArgs {
+    fn run(self) -> anyhow::Result<()> {
+        domains::ensure_cbor_packs(&self.bundle)?;
+        let discovery = discovery::discover_with_options(
+            &self.bundle,
+            discovery::DiscoveryOptions { cbor_only: true },
+        )?;
+        let secrets_handle =
+            secrets_gate::resolve_secrets_manager(&self.bundle, &self.tenant, Some(&self.team))?;
+        let runner_host = DemoRunnerHost::new(
+            self.bundle.clone(),
+            &discovery,
+            None,
+            secrets_handle,
+            false,
+        )?;
+        let ctx = OperatorContext {
+            tenant: self.tenant,
+            team: Some(self.team),
+            correlation_id: None,
+        };
+        let plan = runner_host.capability_setup_plan(&ctx);
+        if plan.is_empty() {
+            println!("no capabilities requiring setup found");
+            return Ok(());
+        }
+        for item in plan {
+            println!(
+                "{} | cap={} | pack={} | op={} | qa_ref={}",
+                item.stable_id,
+                item.cap_id,
+                item.pack_id,
+                item.provider_op,
+                item.setup_qa_ref.as_deref().unwrap_or("<none>")
+            );
+        }
+        Ok(())
+    }
+}
+
+impl DemoCapabilityMarkReadyArgs {
+    fn run(self) -> anyhow::Result<()> {
+        domains::ensure_cbor_packs(&self.bundle)?;
+        let discovery = discovery::discover_with_options(
+            &self.bundle,
+            discovery::DiscoveryOptions { cbor_only: true },
+        )?;
+        let secrets_handle =
+            secrets_gate::resolve_secrets_manager(&self.bundle, &self.tenant, Some(&self.team))?;
+        let runner_host = DemoRunnerHost::new(
+            self.bundle.clone(),
+            &discovery,
+            None,
+            secrets_handle,
+            false,
+        )?;
+        let scope = ResolveScope {
+            env: env::var("GREENTIC_ENV").ok(),
+            tenant: Some(self.tenant.clone()),
+            team: Some(self.team.clone()),
+        };
+        let Some(binding) = runner_host.resolve_capability(&self.cap_id, None, scope) else {
+            anyhow::bail!("capability {} is not offered in current pack set", self.cap_id);
+        };
+        let ctx = OperatorContext {
+            tenant: self.tenant,
+            team: Some(self.team),
+            correlation_id: None,
+        };
+        let path = runner_host.mark_capability_ready(&ctx, &binding)?;
+        println!("capability marked ready: {}", path.display());
+        Ok(())
+    }
+}
+
+impl DemoCapabilityMarkFailedArgs {
+    fn run(self) -> anyhow::Result<()> {
+        domains::ensure_cbor_packs(&self.bundle)?;
+        let discovery = discovery::discover_with_options(
+            &self.bundle,
+            discovery::DiscoveryOptions { cbor_only: true },
+        )?;
+        let secrets_handle =
+            secrets_gate::resolve_secrets_manager(&self.bundle, &self.tenant, Some(&self.team))?;
+        let runner_host = DemoRunnerHost::new(
+            self.bundle.clone(),
+            &discovery,
+            None,
+            secrets_handle,
+            false,
+        )?;
+        let scope = ResolveScope {
+            env: env::var("GREENTIC_ENV").ok(),
+            tenant: Some(self.tenant.clone()),
+            team: Some(self.team.clone()),
+        };
+        let Some(binding) = runner_host.resolve_capability(&self.cap_id, None, scope) else {
+            anyhow::bail!("capability {} is not offered in current pack set", self.cap_id);
+        };
+        let ctx = OperatorContext {
+            tenant: self.tenant,
+            team: Some(self.team),
+            correlation_id: None,
+        };
+        let path = runner_host.mark_capability_failed(&ctx, &binding, &self.key)?;
+        println!("capability marked failed: {}", path.display());
+        Ok(())
+    }
+}
+
 #[derive(Parser)]
 #[command(
     about = "Create a new demo bundle scaffold.",
@@ -1657,6 +1920,7 @@ impl DemoCommand {
             DemoSubcommand::Allow(args) => args.run(Policy::Public),
             DemoSubcommand::Forbid(args) => args.run(Policy::Forbidden),
             DemoSubcommand::Subscriptions(args) => args.run(),
+            DemoSubcommand::Capability(args) => args.run(),
             DemoSubcommand::Run(args) => args.run(ctx),
         }
     }
@@ -3220,6 +3484,22 @@ fn ensure_provider_op_success(
         .or_else(|| outcome.raw.clone())
         .unwrap_or_else(|| "unknown error".to_string());
     Err(anyhow::anyhow!("{provider_id}.{op} failed: {message}"))
+}
+
+fn print_capability_outcome(outcome: &FlowOutcome) -> anyhow::Result<()> {
+    println!("success: {}", outcome.success);
+    if let Some(error) = outcome.error.as_ref() {
+        println!("error: {}", error);
+    }
+    if let Some(raw) = outcome.raw.as_ref()
+        && !raw.trim().is_empty()
+    {
+        println!("raw:\n{raw}");
+    }
+    if let Some(value) = outcome.output.as_ref() {
+        println!("{}", serde_json::to_string_pretty(value)?);
+    }
+    Ok(())
 }
 
 #[derive(Parser)]

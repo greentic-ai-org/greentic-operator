@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::env;
 use std::fs;
 use std::io::Read;
@@ -23,6 +23,7 @@ use greentic_runner_host::{
     validate::ValidationConfig,
 };
 use greentic_types::decode_pack_manifest;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
 use tokio::runtime::Runtime as TokioRuntime;
 use zip::ZipArchive;
@@ -34,6 +35,10 @@ use crate::runner_integration::RunnerFlavor;
 use crate::runner_integration::run_flow_with_options;
 
 use crate::cards::CardRenderer;
+use crate::capabilities::{
+    CapabilityBinding, CapabilityInstallRecord, CapabilityRegistry, HookStage, ResolveScope,
+    is_binding_ready, write_install_record,
+};
 use crate::discovery;
 use crate::domains::{self, Domain, ProviderPack};
 use crate::operator_log;
@@ -63,6 +68,73 @@ pub struct FlowOutcome {
     pub mode: RunnerExecutionMode,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum OperationStatus {
+    Pending,
+    Denied,
+    Ok,
+    Err,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct OperationEnvelopeContext {
+    tenant: String,
+    team: Option<String>,
+    correlation_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct OperationEnvelope {
+    op_id: String,
+    op_name: String,
+    ctx: OperationEnvelopeContext,
+    payload: Vec<u8>,
+    meta: BTreeMap<String, String>,
+    status: OperationStatus,
+    result: Option<JsonValue>,
+}
+
+impl OperationEnvelope {
+    fn new(op_name: &str, payload: &[u8], ctx: &OperatorContext) -> Self {
+        Self {
+            op_id: uuid::Uuid::new_v4().to_string(),
+            op_name: op_name.to_string(),
+            ctx: OperationEnvelopeContext {
+                tenant: ctx.tenant.clone(),
+                team: ctx.team.clone(),
+                correlation_id: ctx.correlation_id.clone(),
+            },
+            payload: payload.to_vec(),
+            meta: BTreeMap::new(),
+            status: OperationStatus::Pending,
+            result: None,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct HookEvalRequest {
+    stage: String,
+    op_name: String,
+    envelope: OperationEnvelope,
+}
+
+#[derive(Debug, Deserialize)]
+struct HookEvalResponse {
+    decision: String,
+    #[serde(default)]
+    reason: Option<String>,
+    #[serde(default)]
+    envelope: Option<OperationEnvelope>,
+}
+
+#[derive(Debug)]
+enum HookChainOutcome {
+    Continue,
+    Denied(String),
+}
+
 #[derive(Clone, Debug)]
 enum RunnerMode {
     Exec,
@@ -77,6 +149,8 @@ pub struct DemoRunnerHost {
     bundle_root: PathBuf,
     runner_mode: RunnerMode,
     catalog: HashMap<(Domain, String), ProviderPack>,
+    packs_by_path: BTreeMap<PathBuf, ProviderPack>,
+    capability_registry: CapabilityRegistry,
     secrets_handle: SecretsManagerHandle,
     card_renderer: CardRenderer,
     debug_enabled: bool,
@@ -113,6 +187,8 @@ impl DemoRunnerHost {
             RunnerMode::Exec
         };
         let mut catalog = HashMap::new();
+        let mut packs_by_path = BTreeMap::new();
+        let mut pack_index: BTreeMap<PathBuf, String> = BTreeMap::new();
         let provider_map = discovery
             .providers
             .iter()
@@ -126,6 +202,8 @@ impl DemoRunnerHost {
                 domains::discover_provider_packs(&bundle_root, domain)?
             };
             for pack in packs {
+                packs_by_path.insert(pack.path.clone(), pack.clone());
+                pack_index.insert(pack.path.clone(), pack.pack_id.clone());
                 let provider_type = provider_map
                     .get(&pack.path)
                     .cloned()
@@ -136,10 +214,13 @@ impl DemoRunnerHost {
                 }
             }
         }
+        let capability_registry = CapabilityRegistry::build_from_pack_index(&pack_index)?;
         Ok(Self {
             bundle_root,
             runner_mode: mode,
             catalog,
+            packs_by_path,
+            capability_registry,
             secrets_handle,
             card_renderer: CardRenderer::new(),
             debug_enabled,
@@ -148,6 +229,131 @@ impl DemoRunnerHost {
 
     pub fn debug_enabled(&self) -> bool {
         self.debug_enabled
+    }
+
+    pub fn resolve_capability(
+        &self,
+        cap_id: &str,
+        min_version: Option<&str>,
+        scope: ResolveScope,
+    ) -> Option<CapabilityBinding> {
+        self.capability_registry.resolve(cap_id, min_version, &scope)
+    }
+
+    pub fn resolve_hook_chain(&self, stage: HookStage, op_name: &str) -> Vec<CapabilityBinding> {
+        self.capability_registry.resolve_hook_chain(stage, op_name)
+    }
+
+    pub fn capability_setup_plan(&self, ctx: &OperatorContext) -> Vec<CapabilityBinding> {
+        let scope = ResolveScope {
+            env: env::var("GREENTIC_ENV").ok(),
+            tenant: Some(ctx.tenant.clone()),
+            team: ctx.team.clone(),
+        };
+        self.capability_registry
+            .offers_requiring_setup(&scope)
+            .into_iter()
+            .map(|offer| CapabilityBinding {
+                cap_id: offer.cap_id,
+                stable_id: offer.stable_id,
+                pack_id: offer.pack_id,
+                pack_path: offer.pack_path,
+                provider_component_ref: offer.provider_component_ref,
+                provider_op: offer.provider_op,
+                version: offer.version,
+                requires_setup: offer.requires_setup,
+                setup_qa_ref: offer.setup_qa_ref,
+            })
+            .collect()
+    }
+
+    pub fn mark_capability_ready(&self, ctx: &OperatorContext, binding: &CapabilityBinding) -> anyhow::Result<PathBuf> {
+        let record = CapabilityInstallRecord::ready(&binding.cap_id, &binding.stable_id, &binding.pack_id);
+        write_install_record(&self.bundle_root, &ctx.tenant, ctx.team.as_deref(), &record)
+    }
+
+    pub fn mark_capability_failed(
+        &self,
+        ctx: &OperatorContext,
+        binding: &CapabilityBinding,
+        failure_key: &str,
+    ) -> anyhow::Result<PathBuf> {
+        let record = CapabilityInstallRecord::failed(
+            &binding.cap_id,
+            &binding.stable_id,
+            &binding.pack_id,
+            failure_key,
+        );
+        write_install_record(&self.bundle_root, &ctx.tenant, ctx.team.as_deref(), &record)
+    }
+
+    pub fn invoke_capability(
+        &self,
+        cap_id: &str,
+        op: &str,
+        payload_bytes: &[u8],
+        ctx: &OperatorContext,
+    ) -> anyhow::Result<FlowOutcome> {
+        let scope = ResolveScope {
+            env: env::var("GREENTIC_ENV").ok(),
+            tenant: Some(ctx.tenant.clone()),
+            team: ctx.team.clone(),
+        };
+        let Some(binding) = self.resolve_capability(cap_id, None, scope) else {
+            return Ok(missing_capability_outcome(cap_id, op));
+        };
+        if !is_binding_ready(&self.bundle_root, &ctx.tenant, ctx.team.as_deref(), &binding)? {
+            return Ok(capability_not_installed_outcome(cap_id, op, &binding.stable_id));
+        }
+
+        let Some(pack) = self.packs_by_path.get(&binding.pack_path) else {
+            return Ok(capability_route_error_outcome(
+                cap_id,
+                op,
+                format!("resolved pack not found at {}", binding.pack_path.display()),
+            ));
+        };
+
+        let target_op = if op.trim().is_empty() {
+            binding.provider_op.as_str()
+        } else {
+            op
+        };
+
+        // Capability invocations go through the same operator pipeline.
+        let mut envelope = OperationEnvelope::new(&format!("cap.invoke:{cap_id}"), payload_bytes, ctx);
+        let pre_chain = self.resolve_hook_chain(HookStage::Pre, &envelope.op_name);
+        let pre_hook_outcome = self.evaluate_hook_chain(&pre_chain, HookStage::Pre, &mut envelope)?;
+        self.emit_pre_sub(&envelope);
+        if let HookChainOutcome::Denied(reason) = pre_hook_outcome {
+            envelope.status = OperationStatus::Denied;
+            self.emit_post_sub(&envelope);
+            return Ok(capability_route_error_outcome(
+                cap_id,
+                target_op,
+                format!("operation denied by pre-hook: {reason}"),
+            ));
+        }
+
+        let outcome = self.invoke_provider_component_op(
+            Domain::Messaging,
+            pack,
+            &binding.pack_id,
+            target_op,
+            payload_bytes,
+            ctx,
+        )?;
+
+        envelope.status = if outcome.success {
+            OperationStatus::Ok
+        } else {
+            OperationStatus::Err
+        };
+        envelope.result = outcome.output.clone();
+        let post_chain = self.resolve_hook_chain(HookStage::Post, &envelope.op_name);
+        let _ = self.evaluate_hook_chain(&post_chain, HookStage::Post, &mut envelope)?;
+        self.emit_post_sub(&envelope);
+        Ok(outcome)
     }
 
     pub fn supports_op(&self, domain: Domain, provider_type: &str, op_id: &str) -> bool {
@@ -161,6 +367,44 @@ impl DemoRunnerHost {
     }
 
     pub fn invoke_provider_op(
+        &self,
+        domain: Domain,
+        provider_type: &str,
+        op_id: &str,
+        payload_bytes: &[u8],
+        ctx: &OperatorContext,
+    ) -> anyhow::Result<FlowOutcome> {
+        let mut envelope = OperationEnvelope::new(op_id, payload_bytes, ctx);
+        let pre_chain = self.resolve_hook_chain(HookStage::Pre, op_id);
+        let pre_hook_outcome = self.evaluate_hook_chain(&pre_chain, HookStage::Pre, &mut envelope)?;
+        self.emit_pre_sub(&envelope);
+        if let HookChainOutcome::Denied(reason) = pre_hook_outcome {
+            envelope.status = OperationStatus::Denied;
+            self.emit_post_sub(&envelope);
+            return Ok(FlowOutcome {
+                success: false,
+                output: Some(serde_json::to_value(&envelope).unwrap_or_else(|_| json!({}))),
+                raw: None,
+                error: Some(format!("operation denied by pre-hook: {reason}")),
+                mode: RunnerExecutionMode::Exec,
+            });
+        }
+
+        let outcome = self.invoke_provider_op_inner(domain, provider_type, op_id, payload_bytes, ctx)?;
+        envelope.status = if outcome.success {
+            OperationStatus::Ok
+        } else {
+            OperationStatus::Err
+        };
+        envelope.result = outcome.output.clone();
+
+        let post_chain = self.resolve_hook_chain(HookStage::Post, op_id);
+        let _ = self.evaluate_hook_chain(&post_chain, HookStage::Post, &mut envelope)?;
+        self.emit_post_sub(&envelope);
+        Ok(outcome)
+    }
+
+    fn invoke_provider_op_inner(
         &self,
         domain: Domain,
         provider_type: &str,
@@ -250,6 +494,114 @@ impl DemoRunnerHost {
         }
 
         self.invoke_provider_component_op(domain, pack, provider_type, op_id, payload_bytes, ctx)
+    }
+
+    fn evaluate_hook_chain(
+        &self,
+        chain: &[CapabilityBinding],
+        stage: HookStage,
+        envelope: &mut OperationEnvelope,
+    ) -> anyhow::Result<HookChainOutcome> {
+        for binding in chain {
+            let Some(pack) = self.packs_by_path.get(&binding.pack_path) else {
+                operator_log::warn(
+                    module_path!(),
+                    format!(
+                        "hook binding skipped; pack not found stable_id={} path={}",
+                        binding.stable_id,
+                        binding.pack_path.display()
+                    ),
+                );
+                continue;
+            };
+
+            let payload = serde_json::to_vec(&HookEvalRequest {
+                stage: match stage {
+                    HookStage::Pre => "pre",
+                    HookStage::Post => "post",
+                }
+                .to_string(),
+                op_name: envelope.op_name.clone(),
+                envelope: envelope.clone(),
+            })?;
+            let ctx = OperatorContext {
+                tenant: envelope.ctx.tenant.clone(),
+                team: envelope.ctx.team.clone(),
+                correlation_id: envelope.ctx.correlation_id.clone(),
+            };
+            let outcome = self.invoke_provider_component_op(
+                Domain::Messaging,
+                pack,
+                &binding.pack_id,
+                &binding.provider_op,
+                &payload,
+                &ctx,
+            )?;
+            if !outcome.success {
+                operator_log::warn(
+                    module_path!(),
+                    format!(
+                        "hook invocation failed stage={:?} binding={} err={}",
+                        stage,
+                        binding.stable_id,
+                        outcome.error.unwrap_or_else(|| "unknown error".to_string())
+                    ),
+                );
+                continue;
+            }
+            let Some(output) = outcome.output else {
+                continue;
+            };
+            let parsed: HookEvalResponse = match serde_json::from_value(output) {
+                Ok(value) => value,
+                Err(err) => {
+                    operator_log::warn(
+                        module_path!(),
+                        format!(
+                            "hook response decode failed stage={:?} binding={} err={}",
+                            stage, binding.stable_id, err
+                        ),
+                    );
+                    continue;
+                }
+            };
+            if let Some(updated) = parsed.envelope {
+                *envelope = updated;
+            }
+            if parsed.decision.eq_ignore_ascii_case("deny") && matches!(stage, HookStage::Pre) {
+                let reason = parsed
+                    .reason
+                    .unwrap_or_else(|| "hook denied operation".to_string());
+                return Ok(HookChainOutcome::Denied(reason));
+            }
+        }
+        Ok(HookChainOutcome::Continue)
+    }
+
+    fn emit_pre_sub(&self, envelope: &OperationEnvelope) {
+        operator_log::info(
+            module_path!(),
+            format!(
+                "sub.pre op={} status={:?} tenant={} team={}",
+                envelope.op_name,
+                envelope.status,
+                envelope.ctx.tenant,
+                envelope.ctx.team.as_deref().unwrap_or("default")
+            ),
+        );
+    }
+
+    fn emit_post_sub(&self, envelope: &OperationEnvelope) {
+        operator_log::info(
+            module_path!(),
+            format!(
+                "sub.post op={} status={:?} tenant={} team={}",
+                envelope.op_name,
+                envelope.status,
+                envelope.ctx.tenant,
+                envelope.ctx.team.as_deref().unwrap_or("default")
+            ),
+        );
     }
 
     fn execute_with_runner_exec(
@@ -516,6 +868,61 @@ fn secret_error_context(
         pack.pack_id,
         pack.path.display()
     )
+}
+
+fn missing_capability_outcome(cap_id: &str, op_name: &str) -> FlowOutcome {
+    FlowOutcome {
+        success: false,
+        output: Some(json!({
+            "code": "missing_capability",
+            "error": {
+                "type": "MissingCapability",
+                "cap_id": cap_id,
+                "op_name": op_name,
+            }
+        })),
+        raw: None,
+        error: Some(format!("MissingCapability(cap_id={cap_id}, op_name={op_name})")),
+        mode: RunnerExecutionMode::Exec,
+    }
+}
+
+fn capability_not_installed_outcome(cap_id: &str, op_name: &str, stable_id: &str) -> FlowOutcome {
+    FlowOutcome {
+        success: false,
+        output: Some(json!({
+            "code": "capability_not_installed",
+            "error": {
+                "type": "CapabilityNotInstalled",
+                "cap_id": cap_id,
+                "op_name": op_name,
+                "stable_id": stable_id,
+            }
+        })),
+        raw: None,
+        error: Some(format!(
+            "CapabilityNotInstalled(cap_id={cap_id}, op_name={op_name}, stable_id={stable_id})"
+        )),
+        mode: RunnerExecutionMode::Exec,
+    }
+}
+
+fn capability_route_error_outcome(cap_id: &str, op_name: &str, reason: String) -> FlowOutcome {
+    FlowOutcome {
+        success: false,
+        output: Some(json!({
+            "code": "capability_route_error",
+            "error": {
+                "type": "CapabilityRouteError",
+                "cap_id": cap_id,
+                "op_name": op_name,
+                "reason": reason,
+            }
+        })),
+        raw: None,
+        error: Some(reason),
+        mode: RunnerExecutionMode::Exec,
+    }
 }
 
 fn read_transcript_outputs(run_dir: &Path) -> anyhow::Result<Option<JsonValue>> {
