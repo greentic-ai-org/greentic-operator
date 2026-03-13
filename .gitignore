@@ -1,4 +1,6 @@
 /target
 .greentic/
+temp_auto_push.bat
 seeds.yaml
-providers.json
+providers.json.gitignore
+branch_structure.json
