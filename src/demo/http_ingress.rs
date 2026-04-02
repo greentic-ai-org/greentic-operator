@@ -800,7 +800,7 @@ fn route_messaging_envelopes(
                         // Verify token and get username, then show connected card
                         match crate::demo::github_mcp::get_authenticated_user(token) {
                             Ok(username) => {
-                                eprintln!("[directline] GitHub authenticated as: {username}");
+                                eprintln!("[directline] GitHub authentication succeeded");
                                 let card = crate::demo::github_mcp::build_connected_card(&username);
                                 build_card_reply(envelope, &card, "token-saved-connected")
                             }
@@ -941,10 +941,8 @@ fn route_messaging_envelopes(
 
         for out_envelope in outputs {
             eprintln!(
-                "[directline] processing reply envelope text={:?} id={} session_id={} channel={}",
-                out_envelope.text.as_deref().unwrap_or(""),
-                out_envelope.id,
-                out_envelope.session_id,
+                "[directline] processing reply envelope id_present={} channel={}",
+                !out_envelope.id.is_empty(),
                 out_envelope.channel,
             );
 
@@ -998,8 +996,7 @@ fn route_messaging_envelopes(
                         }
                     }
                     eprintln!(
-                        "[directline] webchat card reply → direct inject (skip egress) conv={}",
-                        conv_id
+                        "[directline] webchat card reply -> direct inject (skip egress)"
                     );
                     store.push(conv_id, activity);
                 }
