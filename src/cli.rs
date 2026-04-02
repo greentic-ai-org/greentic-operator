@@ -5888,10 +5888,10 @@ fn run_plan_item(
             Ok(saved) if !saved.is_empty() => {
                 eprintln!("persisted secret(s) for provider={}", provider_id);
             }
-            Err(err) => {
+            Err(_err) => {
                 operator_log::warn(
                     module_path!(),
-                    format!("failed to persist secrets provider={}: {err}", provider_id),
+                    format!("failed to persist secrets provider={}", provider_id),
                 );
             }
             _ => {}

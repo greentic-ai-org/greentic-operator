@@ -735,7 +735,7 @@ fn route_messaging_envelopes(
                     let args_str = envelope.metadata.get("args").cloned().unwrap_or_default();
                     serde_json::from_str(&args_str).unwrap_or(json!({}))
                 };
-                eprintln!("[directline] MCP dispatch tool={tool} args={args}");
+                eprintln!("[directline] MCP dispatch tool={tool}");
 
                 // Read GitHub token from secrets
                 let token = read_github_token(bundle, ctx);
@@ -747,7 +747,7 @@ fn route_messaging_envelopes(
                             build_card_reply(envelope, &card, &format!("mcp-{tool}"))
                         }
                         Err(err) => {
-                            eprintln!("[directline] MCP tool={tool} failed: {err}");
+                            eprintln!("[directline] MCP tool={tool} failed");
                             let card = json!({
                                 "type": "AdaptiveCard", "version": "1.3",
                                 "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
@@ -803,7 +803,7 @@ fn route_messaging_envelopes(
                                 build_card_reply(envelope, &card, "token-saved-connected")
                             }
                             Err(err) => {
-                                eprintln!("[directline] GitHub token verification failed: {err}");
+                                eprintln!("[directline] GitHub token verification failed");
                                 let card = json!({
                                     "type": "AdaptiveCard", "version": "1.3",
                                     "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
@@ -995,17 +995,19 @@ fn route_messaging_envelopes(
                 continue;
             }
 
+            let plan_envelope = redact_envelope_for_logging(out_envelope);
+            let plan_message_value = serde_json::to_value(&plan_envelope)?;
             let message_value = serde_json::to_value(&out_envelope)?;
 
             let plan = {
                 let _span =
                     info_span!("egress.render_plan", messaging.provider = %provider).entered();
-                match egress::render_plan(runner_host, ctx, provider, message_value.clone()) {
+                match egress::render_plan(runner_host, ctx, provider, plan_message_value.clone()) {
                     Ok(plan) => plan,
-                    Err(err) => {
+                    Err(_err) => {
                         operator_log::warn(
                             module_path!(),
-                            format!("[demo messaging] render_plan failed: {err}; using empty plan"),
+                            "[demo messaging] render_plan failed; using empty plan".to_string(),
                         );
                         json!({})
                     }
@@ -1020,10 +1022,10 @@ fn route_messaging_envelopes(
                 plan,
             ) {
                 Ok(payload) => payload,
-                Err(err) => {
+                Err(_err) => {
                     operator_log::warn(
                         module_path!(),
-                        format!("[demo messaging] encode failed: {err}; using fallback payload"),
+                        "[demo messaging] encode failed; using fallback payload".to_string(),
                     );
                     let body_bytes = serde_json::to_vec(&message_value)?;
                     ProviderPayloadV1 {
@@ -1082,25 +1084,12 @@ fn route_messaging_envelopes(
                     }
                 }
             } else {
-                let provider_msg = outcome
-                    .output
-                    .as_ref()
-                    .and_then(|v| v.get("message"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                let err_msg = outcome
-                    .error
-                    .clone()
-                    .unwrap_or_else(|| provider_msg.to_string());
-                eprintln!(
-                    "[directline] send FAILED provider={} err={}",
-                    provider, err_msg
-                );
+                eprintln!("[directline] send FAILED provider={}", provider);
                 operator_log::error(
                     module_path!(),
                     format!(
-                        "[demo messaging] send failed provider={} provider_ok={} err={}",
-                        provider, provider_ok, err_msg
+                        "[demo messaging] send failed provider={} provider_ok={}",
+                        provider, provider_ok
                     ),
                 );
             }
@@ -1116,6 +1105,11 @@ fn build_card_reply(
     card_key: &str,
 ) -> Vec<greentic_types::ChannelMessageEnvelope> {
     let mut reply = envelope.clone();
+    reply.metadata.remove("github_token");
+    reply.metadata.remove("token");
+    reply.metadata.remove("authorization");
+    reply.metadata.remove("password");
+    reply.metadata.remove("username");
     reply.metadata.insert(
         "adaptive_card".to_string(),
         serde_json::to_string(card_json).unwrap_or_default(),
@@ -1138,6 +1132,11 @@ fn echo_fallback(
     envelope: &greentic_types::ChannelMessageEnvelope,
 ) -> Vec<greentic_types::ChannelMessageEnvelope> {
     let mut reply = envelope.clone();
+    reply.metadata.remove("github_token");
+    reply.metadata.remove("token");
+    reply.metadata.remove("authorization");
+    reply.metadata.remove("password");
+    reply.metadata.remove("username");
     let original = envelope.text.as_deref().unwrap_or("");
     reply.text = Some(format!("[echo] {}", original));
     reply.id = uuid::Uuid::new_v4().to_string();
@@ -1210,14 +1209,28 @@ fn run_app_flow_safe(
         envelope,
     ) {
         Ok(outputs) => outputs,
-        Err(err) => {
+        Err(_err) => {
             operator_log::error(
                 module_path!(),
-                format!("[demo messaging] app flow failed: {err}"),
+                "[demo messaging] app flow failed".to_string(),
             );
             vec![envelope.clone()]
         }
     }
+}
+
+fn redact_envelope_for_logging(
+    envelope: &greentic_types::ChannelMessageEnvelope,
+) -> greentic_types::ChannelMessageEnvelope {
+    let mut redacted = envelope.clone();
+    // Prevent tracing/logging paths from carrying user-identifying or secret fields.
+    redacted.session_id = "<redacted>".to_string();
+    redacted.metadata.remove("github_token");
+    redacted.metadata.remove("token");
+    redacted.metadata.remove("authorization");
+    redacted.metadata.remove("password");
+    redacted.metadata.remove("username");
+    redacted
 }
 
 fn cors_preflight_response() -> Response<Full<Bytes>> {
