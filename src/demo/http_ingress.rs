@@ -995,9 +995,7 @@ fn route_messaging_envelopes(
                             activity["attachmentLayout"] = json!("list");
                         }
                     }
-                    eprintln!(
-                        "[directline] webchat card reply -> direct inject (skip egress)"
-                    );
+                    eprintln!("[directline] webchat card reply -> direct inject (skip egress)");
                     store.push(conv_id, activity);
                 }
                 continue;
