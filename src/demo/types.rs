@@ -50,3 +50,23 @@ impl UserEvent {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn card_submit_converts_to_expected_json_shape() {
+        let mut fields = Map::new();
+        fields.insert("token".to_string(), Value::String("secret".to_string()));
+        let value = UserEvent::card_submit("save", fields).into_value();
+        assert_eq!(value["action_id"], "save");
+        assert_eq!(value["inputs"]["token"], "secret");
+    }
+
+    #[test]
+    fn raw_event_passes_through_unchanged() {
+        let value = json!({ "kind": "message", "text": "hello" });
+        assert_eq!(UserEvent::raw(value.clone()).into_value(), value);
+    }
+}

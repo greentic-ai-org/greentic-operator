@@ -63,3 +63,64 @@ pub fn backend_kind_from_pack(pack_path: &Path) -> Result<SecretsBackendKind> {
         pack_path.display()
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::File;
+    use tempfile::tempdir;
+    use zip::write::SimpleFileOptions;
+
+    fn write_pack(
+        entries: &[(&str, &str)],
+    ) -> anyhow::Result<(tempfile::TempDir, std::path::PathBuf)> {
+        let dir = tempdir()?;
+        let pack_path = dir.path().join("secrets.gtpack");
+        let file = File::create(&pack_path)?;
+        let mut zip = zip::ZipWriter::new(file);
+        for (name, contents) in entries {
+            zip.start_file(name, SimpleFileOptions::default())?;
+            use std::io::Write;
+            zip.write_all(contents.as_bytes())?;
+        }
+        zip.finish()?;
+        Ok((dir, pack_path))
+    }
+
+    #[test]
+    fn defaults_to_dev_store_when_backend_missing() -> anyhow::Result<()> {
+        let (_dir, pack_path) = write_pack(&[("secrets_backend.json", "{}")])?;
+        assert_eq!(
+            backend_kind_from_pack(&pack_path)?,
+            SecretsBackendKind::DevStore
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn accepts_env_backend_aliases_case_insensitively() -> anyhow::Result<()> {
+        let (_dir, pack_path) = write_pack(&[(
+            "assets/secrets-backend.json",
+            r#"{ "backend": "Environment" }"#,
+        )])?;
+        assert_eq!(backend_kind_from_pack(&pack_path)?, SecretsBackendKind::Env);
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_unknown_backend() -> anyhow::Result<()> {
+        let (_dir, pack_path) =
+            write_pack(&[("secrets-backend.json", r#"{ "backend": "vault" }"#)])?;
+        let err = backend_kind_from_pack(&pack_path).unwrap_err().to_string();
+        assert!(err.contains("unsupported secrets backend 'vault'"));
+        Ok(())
+    }
+
+    #[test]
+    fn errors_when_no_backend_config_exists() -> anyhow::Result<()> {
+        let (_dir, pack_path) = write_pack(&[("README.txt", "hello")])?;
+        let err = backend_kind_from_pack(&pack_path).unwrap_err().to_string();
+        assert!(err.contains("missing secrets backend config"));
+        Ok(())
+    }
+}

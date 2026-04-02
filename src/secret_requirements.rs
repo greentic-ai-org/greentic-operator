@@ -146,3 +146,85 @@ struct AssetSecretRequirement {
     #[serde(default)]
     required: Option<bool>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+    use zip::write::SimpleFileOptions;
+
+    fn write_pack(
+        entries: &[(&str, Vec<u8>)],
+    ) -> anyhow::Result<(tempfile::TempDir, std::path::PathBuf)> {
+        let dir = tempdir()?;
+        let pack_path = dir.path().join("provider.gtpack");
+        let file = File::create(&pack_path)?;
+        let mut zip = zip::ZipWriter::new(file);
+        for (name, bytes) in entries {
+            zip.start_file(name, SimpleFileOptions::default())?;
+            use std::io::Write;
+            zip.write_all(bytes)?;
+        }
+        zip.finish()?;
+        Ok((dir, pack_path))
+    }
+
+    #[test]
+    fn load_secret_keys_prefers_assets_and_filters_optional_entries() -> anyhow::Result<()> {
+        let (_dir, pack_path) = write_pack(&[(
+            "assets/secret-requirements.json",
+            br#"[{"key":"ApiKey"},{"key":"SkipMe","required":false},{"required":true}]"#.to_vec(),
+        )])?;
+        assert_eq!(
+            load_secret_keys_from_pack(&pack_path)?,
+            vec!["apikey".to_string()]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn load_secret_keys_falls_back_to_manifest_symbols() -> anyhow::Result<()> {
+        let mut manifest = BTreeMap::new();
+        manifest.insert(
+            CborValue::Text("symbols".to_string()),
+            CborValue::Map(BTreeMap::from([(
+                CborValue::Text("secret_requirement".to_string()),
+                CborValue::Array(vec![CborValue::Text("BotToken".to_string())]),
+            )])),
+        );
+        manifest.insert(
+            CborValue::Text("secret_requirements".to_string()),
+            CborValue::Array(vec![
+                CborValue::Map(BTreeMap::from([
+                    (
+                        CborValue::Text("key".to_string()),
+                        CborValue::Integer(0.into()),
+                    ),
+                    (
+                        CborValue::Text("required".to_string()),
+                        CborValue::Bool(true),
+                    ),
+                ])),
+                CborValue::Map(BTreeMap::from([
+                    (
+                        CborValue::Text("key".to_string()),
+                        CborValue::Text("DirectKey".to_string()),
+                    ),
+                    (
+                        CborValue::Text("required".to_string()),
+                        CborValue::Bool(false),
+                    ),
+                ])),
+            ]),
+        );
+        let (_dir, pack_path) = write_pack(&[(
+            "manifest.cbor",
+            serde_cbor::to_vec(&CborValue::Map(manifest))?,
+        )])?;
+        assert_eq!(
+            load_secret_keys_from_pack(&pack_path)?,
+            vec!["bottoken".to_string()]
+        );
+        Ok(())
+    }
+}

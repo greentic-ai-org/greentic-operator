@@ -59,3 +59,23 @@ fn write_if_missing(path: &Path, contents: &str) -> anyhow::Result<()> {
     std::fs::write(path, contents)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn ensure_dir_and_write_if_missing_are_idempotent() -> anyhow::Result<()> {
+        let dir = tempdir()?;
+        let nested = dir.path().join("state/runtime");
+        ensure_dir(&nested)?;
+        assert!(nested.exists());
+
+        let file = dir.path().join("config/demo.txt");
+        write_if_missing(&file, "first")?;
+        write_if_missing(&file, "second")?;
+        assert_eq!(std::fs::read_to_string(file)?, "first");
+        Ok(())
+    }
+}

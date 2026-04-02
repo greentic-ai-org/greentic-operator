@@ -1913,6 +1913,7 @@ impl DemoUpArgs {
             admin_port: 8443,
             admin_certs_dir: None,
             admin_allowed_clients: Vec::new(),
+            tunnel_explicit: false,
         }
     }
 }

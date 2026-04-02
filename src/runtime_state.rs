@@ -78,6 +78,7 @@ impl RuntimePaths {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     #[test]
     fn logs_dir_uses_bundle_logs() {
@@ -86,6 +87,68 @@ mod tests {
             paths.logs_dir(),
             PathBuf::from("/tmp/bundle/logs").join("demo.default")
         );
+    }
+
+    #[test]
+    fn runtime_paths_build_expected_locations() {
+        let paths = RuntimePaths::new("/tmp/bundle/state", "tenant", "team");
+        assert_eq!(paths.key(), "tenant.team");
+        assert_eq!(
+            paths.runtime_root(),
+            PathBuf::from("/tmp/bundle/state/runtime/tenant.team")
+        );
+        assert_eq!(
+            paths.pids_dir(),
+            PathBuf::from("/tmp/bundle/state/pids/tenant.team")
+        );
+        assert_eq!(
+            paths.resolved_path("svc"),
+            PathBuf::from("/tmp/bundle/state/runtime/tenant.team/resolved/svc.json")
+        );
+        assert_eq!(
+            paths.service_manifest_path(),
+            PathBuf::from("/tmp/bundle/state/runtime/tenant.team/services.json")
+        );
+    }
+
+    #[test]
+    fn write_and_read_json_round_trip() -> anyhow::Result<()> {
+        let dir = tempdir()?;
+        let path = dir.path().join("state").join("manifest.json");
+        let manifest = ServiceManifest {
+            log_dir: Some("logs".to_string()),
+            services: vec![ServiceEntry::new(
+                "gateway",
+                "service",
+                Some(Path::new("/tmp/gateway.log")),
+            )],
+        };
+        write_json(&path, &manifest)?;
+        let loaded: ServiceManifest = read_json(&path)?.expect("manifest should exist");
+        assert_eq!(loaded.log_dir.as_deref(), Some("logs"));
+        assert_eq!(loaded.services.len(), 1);
+        assert_eq!(loaded.services[0].id, "gateway");
+        assert_eq!(
+            loaded.services[0].log_path.as_deref(),
+            Some("/tmp/gateway.log")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn persist_and_remove_service_manifest() -> anyhow::Result<()> {
+        let dir = tempdir()?;
+        let paths = RuntimePaths::new(dir.path().join("state"), "demo", "default");
+        let manifest = ServiceManifest {
+            log_dir: Some("logs".to_string()),
+            services: vec![ServiceEntry::new("nats", "service", None)],
+        };
+        persist_service_manifest(&paths, &manifest)?;
+        let loaded = read_service_manifest(&paths)?.expect("manifest should exist");
+        assert_eq!(loaded.services.len(), 1);
+        remove_service_manifest(&paths)?;
+        assert!(read_service_manifest(&paths)?.is_none());
+        Ok(())
     }
 }
 

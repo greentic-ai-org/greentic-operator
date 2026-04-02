@@ -65,4 +65,17 @@ mod tests {
         assert_eq!(format!("{value}"), "[REDACTED]");
         assert_eq!(format!("{value:?}"), "[REDACTED]");
     }
+
+    #[test]
+    fn owned_and_borrowed_values_expose_bytes_and_lengths() {
+        let borrowed = SecretValue::new(b"abc");
+        assert_eq!(borrowed.as_bytes(), b"abc");
+        assert_eq!(borrowed.len(), 3);
+        assert!(!borrowed.is_empty());
+
+        let owned = SecretValue::owned(Vec::new());
+        assert!(owned.is_empty());
+        assert_eq!(owned.len(), 0);
+        assert_eq!(owned.as_bytes(), b"");
+    }
 }

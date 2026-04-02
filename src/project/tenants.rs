@@ -67,3 +67,34 @@ pub fn list_teams(root: &Path, tenant: &str) -> anyhow::Result<Vec<String>> {
     teams.sort();
     Ok(teams)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn tenant_and_team_lifecycle_creates_expected_layout() -> anyhow::Result<()> {
+        let dir = tempdir()?;
+        add_tenant(dir.path(), "acme")?;
+        assert!(dir.path().join("tenants/acme/teams").exists());
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("tenants/acme/tenant.gmap"))?,
+            "_ = forbidden\n"
+        );
+
+        add_team(dir.path(), "acme", "ops")?;
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("tenants/acme/teams/ops/team.gmap"))?,
+            "_ = forbidden\n"
+        );
+        assert_eq!(list_tenants(dir.path())?, vec!["acme".to_string()]);
+        assert_eq!(list_teams(dir.path(), "acme")?, vec!["ops".to_string()]);
+
+        remove_team(dir.path(), "acme", "ops")?;
+        assert!(list_teams(dir.path(), "acme")?.is_empty());
+        remove_tenant(dir.path(), "acme")?;
+        assert!(list_tenants(dir.path())?.is_empty());
+        Ok(())
+    }
+}

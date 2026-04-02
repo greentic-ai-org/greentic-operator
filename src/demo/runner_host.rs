@@ -1427,24 +1427,32 @@ fn extract_token_validation_request(payload_bytes: &[u8]) -> Option<JsonValue> {
     request.insert("token".to_string(), JsonValue::String(token));
     if let Some(issuer) = first_string_at_paths(
         &payload,
-        &["/token_validation/issuer", "/auth/issuer", "/issuer"],
+        &[
+            &["token_validation", "issuer"],
+            &["auth", "issuer"],
+            &["issuer"],
+        ],
     ) {
         request.insert("issuer".to_string(), JsonValue::String(issuer));
     }
     if let Some(audience) = first_value_at_paths(
         &payload,
-        &["/token_validation/audience", "/auth/audience", "/audience"],
+        &[
+            &["token_validation", "audience"],
+            &["auth", "audience"],
+            &["audience"],
+        ],
     ) {
         request.insert("audience".to_string(), normalize_string_or_array(audience));
     }
     if let Some(scopes) = first_value_at_paths(
         &payload,
         &[
-            "/token_validation/scopes",
-            "/token_validation/required_scopes",
-            "/auth/scopes",
-            "/auth/required_scopes",
-            "/scopes",
+            &["token_validation", "scopes"],
+            &["token_validation", "required_scopes"],
+            &["auth", "scopes"],
+            &["auth", "required_scopes"],
+            &["scopes"],
         ],
     ) {
         request.insert("scopes".to_string(), normalize_string_or_array(scopes));
@@ -1456,12 +1464,12 @@ fn extract_bearer_token(payload: &JsonValue) -> Option<String> {
     if let Some(value) = first_string_at_paths(
         payload,
         &[
-            "/token_validation/token",
-            "/auth/token",
-            "/bearer_token",
-            "/token",
-            "/access_token",
-            "/authorization",
+            &["token_validation", "token"],
+            &["auth", "token"],
+            &["bearer_token"],
+            &["token"],
+            &["access_token"],
+            &["authorization"],
         ],
     ) && let Some(token) = parse_bearer_value(&value)
     {
@@ -1474,9 +1482,8 @@ fn extract_bearer_token(payload: &JsonValue) -> Option<String> {
         return Some(token);
     }
 
-    if let Some(value) = payload
-        .pointer("/metadata/authorization")
-        .and_then(JsonValue::as_str)
+    if let Some(value) =
+        value_at_path(payload, &["metadata", "authorization"]).and_then(JsonValue::as_str)
         && let Some(token) = parse_bearer_value(value)
     {
         return Some(token);
@@ -1529,15 +1536,23 @@ fn parse_bearer_value(raw: &str) -> Option<String> {
     }
 }
 
-fn first_string_at_paths(payload: &JsonValue, paths: &[&str]) -> Option<String> {
+fn first_string_at_paths(payload: &JsonValue, paths: &[&[&str]]) -> Option<String> {
     paths
         .iter()
-        .find_map(|path| payload.pointer(path).and_then(JsonValue::as_str))
+        .find_map(|path| value_at_path(payload, path).and_then(JsonValue::as_str))
         .map(str::to_string)
 }
 
-fn first_value_at_paths<'a>(payload: &'a JsonValue, paths: &[&str]) -> Option<&'a JsonValue> {
-    paths.iter().find_map(|path| payload.pointer(path))
+fn first_value_at_paths<'a>(payload: &'a JsonValue, paths: &[&[&str]]) -> Option<&'a JsonValue> {
+    paths.iter().find_map(|path| value_at_path(payload, path))
+}
+
+fn value_at_path<'a>(payload: &'a JsonValue, path: &[&str]) -> Option<&'a JsonValue> {
+    let mut current = payload;
+    for segment in path {
+        current = current.get(*segment)?;
+    }
+    Some(current)
 }
 
 fn normalize_string_or_array(value: &JsonValue) -> JsonValue {
@@ -1591,6 +1606,11 @@ fn evaluate_token_validation_output(output: &JsonValue) -> TokenValidationDecisi
                 .then(|| output.clone())
         });
     TokenValidationDecision::Allow(claims)
+}
+
+#[doc(hidden)]
+pub fn benchmark_extract_token_validation_request(payload_bytes: &[u8]) -> Option<JsonValue> {
+    extract_token_validation_request(payload_bytes)
 }
 
 #[cfg(test)]

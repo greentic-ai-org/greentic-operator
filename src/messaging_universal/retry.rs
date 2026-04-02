@@ -95,6 +95,8 @@ fn current_time_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use greentic_types::TenantCtx;
+    use serde_json::json;
 
     #[test]
     fn backoff_steps_up_to_max() {
@@ -116,5 +118,37 @@ mod tests {
         let with_jitter = policy.delay_with_jitter(1, 123);
         assert!(with_jitter >= without_jitter);
         assert!(with_jitter <= without_jitter + Duration::from_millis(policy.jitter_ms));
+    }
+
+    #[test]
+    fn egress_job_tracks_attempts_schedule_and_metadata() {
+        let envelope = ChannelMessageEnvelope {
+            id: "env-1".to_string(),
+            tenant: TenantCtx::new("dev".parse().unwrap(), "demo".parse().unwrap()),
+            channel: "slack".to_string(),
+            session_id: "session-1".to_string(),
+            reply_scope: None,
+            from: None,
+            to: Vec::new(),
+            correlation_id: None,
+            text: Some("hello".to_string()),
+            attachments: Vec::new(),
+            metadata: Default::default(),
+        };
+        let mut job = EgressJob::new("slack", envelope, 0);
+        assert_eq!(job.provider, "slack");
+        assert_eq!(job.attempt, 0);
+        assert_eq!(job.max_attempts, 1);
+
+        let initial_next_run = job.next_run_at_unix_ms;
+        job.increment_attempt();
+        job.schedule_next(250);
+        job.with_plan(json!({ "flow": "deliver" }));
+        job.record_error("temporary failure".to_string());
+
+        assert_eq!(job.attempt, 1);
+        assert!(job.next_run_at_unix_ms >= initial_next_run);
+        assert_eq!(job.plan_cache, Some(json!({ "flow": "deliver" })));
+        assert_eq!(job.last_error.as_deref(), Some("temporary failure"));
     }
 }

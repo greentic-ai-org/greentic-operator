@@ -2,13 +2,15 @@ use anyhow::Context;
 use include_dir::{Dir, include_dir};
 use once_cell::sync::Lazy;
 use std::collections::BTreeMap;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 use unic_langid::LanguageIdentifier;
 
 pub type Map = BTreeMap<String, String>;
 
 static OPERATOR_CLI_I18N: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/i18n/operator_cli");
 static CURRENT_LOCALE: Lazy<RwLock<String>> = Lazy::new(|| RwLock::new(select_locale(None)));
+static CLI_CACHE: Lazy<RwLock<BTreeMap<String, Arc<Map>>>> =
+    Lazy::new(|| RwLock::new(BTreeMap::new()));
 
 pub fn select_locale(cli_locale: Option<&str>) -> String {
     let supported = supported_locales();
@@ -63,7 +65,7 @@ pub fn trf(key: &str, fallback: &str, args: &[&str]) -> String {
 }
 
 pub fn tr_for_locale(key: &str, fallback: &str, locale: &str) -> String {
-    match load_cli(locale) {
+    match load_cli_cached(locale) {
         Ok(map) => map
             .get(key)
             .cloned()
@@ -73,6 +75,29 @@ pub fn tr_for_locale(key: &str, fallback: &str, locale: &str) -> String {
 }
 
 pub fn load_cli(locale: &str) -> anyhow::Result<Map> {
+    load_cli_cached(locale).map(|map| map.as_ref().clone())
+}
+
+fn load_cli_cached(locale: &str) -> anyhow::Result<Arc<Map>> {
+    let cache_key = normalize_cache_key(locale);
+    if let Ok(cache) = CLI_CACHE.read()
+        && let Some(existing) = cache.get(&cache_key)
+    {
+        return Ok(Arc::clone(existing));
+    }
+
+    let parsed = Arc::new(parse_cli(locale)?);
+    if let Ok(mut cache) = CLI_CACHE.write() {
+        let entry = cache
+            .entry(cache_key)
+            .or_insert_with(|| Arc::clone(&parsed));
+        return Ok(Arc::clone(entry));
+    }
+
+    Ok(parsed)
+}
+
+fn parse_cli(locale: &str) -> anyhow::Result<Map> {
     for candidate in locale_candidates(locale) {
         if let Some(file) = OPERATOR_CLI_I18N.get_file(&candidate) {
             let raw = file.contents_utf8().ok_or_else(|| {
@@ -83,6 +108,10 @@ pub fn load_cli(locale: &str) -> anyhow::Result<Map> {
         }
     }
     Ok(Map::new())
+}
+
+fn normalize_cache_key(locale: &str) -> String {
+    locale.trim().to_string()
 }
 
 fn locale_candidates(locale: &str) -> Vec<String> {

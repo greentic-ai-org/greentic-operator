@@ -112,3 +112,69 @@ fn normalize_env_key(name: &str) -> String {
         })
         .collect::<String>()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn explicit_relative_path_is_resolved_from_config_dir() -> anyhow::Result<()> {
+        let dir = tempdir()?;
+        let binary = dir.path().join("bin").join("demo-runner");
+        std::fs::create_dir_all(binary.parent().unwrap())?;
+        std::fs::write(&binary, "#!/bin/sh\n")?;
+
+        let resolved = resolve_binary(
+            "demo-runner",
+            &ResolveCtx {
+                config_dir: dir.path().to_path_buf(),
+                explicit_path: Some(PathBuf::from("bin/demo-runner")),
+            },
+        )?;
+        assert_eq!(resolved, binary);
+        Ok(())
+    }
+
+    #[test]
+    fn local_candidates_are_checked_before_path() -> anyhow::Result<()> {
+        let dir = tempdir()?;
+        let binary = dir.path().join("target").join("debug").join("gateway");
+        std::fs::create_dir_all(binary.parent().unwrap())?;
+        std::fs::write(&binary, "#!/bin/sh\n")?;
+
+        let resolved = resolve_binary(
+            "gateway",
+            &ResolveCtx {
+                config_dir: dir.path().to_path_buf(),
+                explicit_path: None,
+            },
+        )?;
+        assert_eq!(resolved, binary);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_binary_error_includes_suggestions() {
+        let dir = tempdir().unwrap();
+        let binary_name = "totally-missing-greentic-bin";
+        let err = resolve_binary(
+            binary_name,
+            &ResolveCtx {
+                config_dir: dir.path().to_path_buf(),
+                explicit_path: None,
+            },
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains(&format!("binary not found: {binary_name}")));
+        assert!(err.contains("GREENTIC_OPERATOR_BINARY_TOTALLY_MISSING_GREENTIC_BIN"));
+        assert!(err.contains("set binaries.totally-missing-greentic-bin in greentic.yaml"));
+    }
+
+    #[test]
+    fn normalize_env_key_rewrites_non_alphanumeric_chars() {
+        assert_eq!(normalize_env_key("greentic-pack"), "GREENTIC_PACK");
+        assert_eq!(normalize_env_key("runner.host/v1"), "RUNNER_HOST_V1");
+    }
+}

@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "global": {
+    "line_coverage_min": 60.0
+  },
+  "defaults": {
+    "per_file_line_coverage_min": 60.0
+  },
+  "exclusions": {
+    "files": [
+      "crates/greentic-secrets-repro/src/bin/read_secret.rs",
+      "src/admin_api.rs",
+      "src/capability_bootstrap.rs",
+      "src/cli.rs",
+      "src/component_qa_ops.rs",
+      "src/demo/card/show.rs",
+      "src/demo/doctor.rs",
+      "src/demo/event_router.rs",
+      "src/demo/github_mcp.rs",
+      "src/demo/help.rs",
+      "src/demo/http_ingress.rs",
+      "src/demo/ingress_dispatch.rs",
+      "src/demo/repl.rs",
+      "src/demo/runner_host.rs",
+      "src/demo/timer_scheduler.rs",
+      "src/doctor.rs",
+      "src/domains/mod.rs",
+      "src/hooks/runner.rs",
+      "src/main.rs",
+      "src/messaging_universal/app.rs",
+      "src/messaging_universal/egress.rs",
+      "src/messaging_universal/ingress.rs",
+      "src/messaging_universal/provider.rs",
+      "src/ngrok.rs",
+      "src/onboard/api.rs",
+      "src/onboard/providers.rs",
+      "src/onboard/webhook_setup.rs",
+      "src/onboard/wizard.rs",
+      "src/project/layout.rs",
+      "src/project/mod.rs",
+      "src/project/scan.rs",
+      "src/provider_registry.rs",
+      "src/qa_flow_handler.rs",
+      "src/qa_persist.rs",
+      "src/qa_setup_wizard.rs",
+      "src/runner_exec.rs",
+      "src/services/components.rs",
+      "src/services/nats.rs",
+      "src/services/runner.rs",
+      "src/subscriptions_universal/demo.rs",
+      "src/wizard_executor.rs",
+      "src/wizard_spec_builder.rs"
+    ]
+  },
+  "per_file": {
+    "src/config.rs": {
+      "line_coverage_min": 75.0
+    },
+    "src/runtime_state.rs": {
+      "line_coverage_min": 75.0
+    },
+    "src/secrets_manager.rs": {
+      "line_coverage_min": 80.0
+    },
+    "src/secrets_backend.rs": {
+      "line_coverage_min": 80.0
+    },
+    "src/secrets_client.rs": {
+      "line_coverage_min": 75.0
+    },
+    "src/supervisor.rs": {
+      "line_coverage_min": 70.0
+    }
+  }
+}

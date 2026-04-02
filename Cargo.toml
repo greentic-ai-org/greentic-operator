@@ -88,8 +88,13 @@ uuid = { version = "1", features = ["v4"] }
 zip = "8"
 
 [dev-dependencies]
+criterion = "0.5"
 indexmap = "2"
 tempfile = "3.10"
+
+[[bench]]
+name = "perf"
+harness = false
 
 [workspace.dependencies]
 anyhow = "1.0"

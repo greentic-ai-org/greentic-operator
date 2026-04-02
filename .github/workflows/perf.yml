@@ -1,0 +1,29 @@
+name: Perf (lightweight)
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  perf:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run perf guard tests
+        run: cargo test --test perf_scaling --test perf_timeout --all-features
+
+      - name: Run benchmarks (smoke)
+        run: cargo bench --bench perf -- --noplot --sample-size 10

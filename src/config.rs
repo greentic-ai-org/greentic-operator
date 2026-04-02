@@ -407,3 +407,164 @@ fn default_msgraph_mode() -> String {
 pub(crate) fn default_events_components() -> Vec<ServiceComponentConfig> {
     Vec::new()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn load_operator_config_returns_none_for_missing_or_comment_only_file() -> anyhow::Result<()> {
+        let dir = tempdir()?;
+        assert!(load_operator_config(dir.path())?.is_none());
+
+        std::fs::write(
+            dir.path().join("greentic.yaml"),
+            "# comment only\n   \n# still comment\n",
+        )?;
+        assert!(load_operator_config(dir.path())?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn load_operator_config_parses_binaries_and_service_components() -> anyhow::Result<()> {
+        let dir = tempdir()?;
+        std::fs::write(
+            dir.path().join("greentic.yaml"),
+            r#"
+binaries:
+  gateway: bin/gateway
+services:
+  messaging:
+    enabled: "true"
+    components:
+      - id: gateway
+        binary: gateway
+        args: ["--port", "8080"]
+"#,
+        )?;
+
+        let config = load_operator_config(dir.path())?.expect("config should exist");
+        assert_eq!(
+            config.binaries.get("gateway"),
+            Some(&"bin/gateway".to_string())
+        );
+        let services = config.services.expect("services should be present");
+        assert!(services.messaging.enabled.is_enabled(false));
+        assert_eq!(services.messaging.components.len(), 1);
+        assert_eq!(services.messaging.components[0].id, "gateway");
+        assert_eq!(
+            services.messaging.components[0].args,
+            vec!["--port".to_string(), "8080".to_string()]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn binary_override_resolves_relative_and_absolute_paths() {
+        let mut config = OperatorConfig::default();
+        config
+            .binaries
+            .insert("gateway".to_string(), "bin/gateway".to_string());
+        config
+            .binaries
+            .insert("nats".to_string(), "/usr/bin/nats-server".to_string());
+
+        assert_eq!(
+            binary_override(Some(&config), "gateway", Path::new("/tmp/demo")),
+            Some(PathBuf::from("/tmp/demo/bin/gateway"))
+        );
+        assert_eq!(
+            binary_override(Some(&config), "nats", Path::new("/tmp/demo")),
+            Some(PathBuf::from("/usr/bin/nats-server"))
+        );
+        assert_eq!(
+            binary_override(Some(&config), "missing", Path::new("/tmp/demo")),
+            None
+        );
+        assert_eq!(
+            binary_override(None, "gateway", Path::new("/tmp/demo")),
+            None
+        );
+    }
+
+    #[test]
+    fn load_demo_config_applies_defaults_for_optional_fields() -> anyhow::Result<()> {
+        let dir = tempdir()?;
+        let path = dir.path().join("demo.yaml");
+        std::fs::write(
+            &path,
+            r#"
+providers:
+  github:
+    pack: providers/github.gtpack
+services:
+  subscriptions:
+    universal:
+      desired:
+        - provider: github
+          resource: repo/issues
+          user:
+            user_id: demo-user
+            token_key: gh_token
+"#,
+        )?;
+
+        let config = load_demo_config(&path)?;
+        assert_eq!(config.tenant, "demo");
+        assert_eq!(config.team, "default");
+        assert!(config.services.nats.enabled);
+        assert_eq!(config.services.nats.url, default_nats_url());
+        assert!(config.services.nats.spawn.enabled);
+        assert_eq!(config.services.nats.spawn.binary, "nats-server");
+        assert_eq!(config.services.gateway.binary, "gateway");
+        assert_eq!(config.services.gateway.listen_addr, "127.0.0.1");
+        assert_eq!(config.services.gateway.port, 8080);
+        assert_eq!(config.services.egress.binary, "egress");
+        assert!(matches!(
+            config.services.subscriptions.mode,
+            DemoSubscriptionsMode::LegacyGsm
+        ));
+        assert_eq!(
+            config
+                .services
+                .subscriptions
+                .universal
+                .renew_interval_seconds,
+            60
+        );
+        assert_eq!(
+            config.services.subscriptions.universal.renew_skew_minutes,
+            10
+        );
+        assert_eq!(
+            config.services.subscriptions.universal.desired[0].change_types,
+            vec!["created".to_string()]
+        );
+        assert_eq!(
+            config.services.subscriptions.universal.desired[0]
+                .user
+                .as_ref()
+                .unwrap()
+                .token_key,
+            "gh_token"
+        );
+        assert!(config.services.subscriptions.msgraph.enabled);
+        assert_eq!(
+            config.services.subscriptions.msgraph.binary,
+            "subscriptions-msgraph"
+        );
+        assert_eq!(config.services.subscriptions.msgraph.mode, "poll");
+        assert_eq!(config.services.events.components.len(), 0);
+        assert!(!config.providers.expect("providers should exist").is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn domain_enabled_mode_respects_auto_and_explicit_values() {
+        assert!(DomainEnabledMode::Auto.is_enabled(true));
+        assert!(!DomainEnabledMode::Auto.is_enabled(false));
+        assert!(DomainEnabledMode::True.is_enabled(false));
+        assert!(!DomainEnabledMode::False.is_enabled(true));
+    }
+}

@@ -164,3 +164,43 @@ fn read_pid(path: &Path) -> anyhow::Result<Option<u32>> {
     }
     Ok(Some(trimmed.parse()?))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn parse_public_url_prefers_clean_urls_and_finds_embedded_urls() {
+        assert_eq!(
+            parse_public_url("https://demo.trycloudflare.com"),
+            Some("https://demo.trycloudflare.com".to_string())
+        );
+        assert_eq!(
+            parse_public_url("INFO tunnel ready at https://demo.trycloudflare.com\n"),
+            Some("https://demo.trycloudflare.com".to_string())
+        );
+        assert_eq!(parse_public_url("no tunnel url here"), None);
+    }
+
+    #[test]
+    fn public_url_path_and_read_pid_follow_runtime_layout() -> anyhow::Result<()> {
+        let dir = tempdir()?;
+        let paths = RuntimePaths::new(dir.path().join("state"), "demo", "default");
+        assert_eq!(
+            public_url_path(&paths),
+            dir.path()
+                .join("state")
+                .join("runtime")
+                .join("demo.default")
+                .join("public_base_url.txt")
+        );
+
+        let pid_path = dir.path().join("cloudflared.pid");
+        std::fs::write(&pid_path, "123\n")?;
+        assert_eq!(read_pid(&pid_path)?, Some(123));
+        std::fs::write(&pid_path, "")?;
+        assert_eq!(read_pid(&pid_path)?, None);
+        Ok(())
+    }
+}

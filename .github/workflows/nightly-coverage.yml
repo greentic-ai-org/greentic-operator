@@ -1,0 +1,52 @@
+name: Nightly Coverage
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "15 2 * * *"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Ensure llvm coverage tools
+        run: rustup component add llvm-tools-preview
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: nightly-coverage-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-binstall@1.6.2
+
+      - name: Install coverage and Greentic CLIs with cargo-binstall
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cargo binstall -y --locked --disable-strategies quick-install cargo-nextest cargo-llvm-cov
+          cargo binstall -y --locked --disable-strategies quick-install --version 0.4 greentic-pack greentic-dev
+
+      - name: Validate coverage policy
+        run: greentic-dev coverage
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-coverage-report
+          path: target/coverage/coverage.json
+          if-no-files-found: ignore

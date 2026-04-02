@@ -81,3 +81,50 @@ fn debug_enabled() -> bool {
         Ok("1") | Ok("true") | Ok("yes")
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_value_source_formats_expected_labels() {
+        assert_eq!(ConfigValueSource::Argument("foo").to_string(), "arg(foo)");
+        assert_eq!(
+            ConfigValueSource::Platform("env").to_string(),
+            "platform(env)"
+        );
+        assert_eq!(
+            ConfigValueSource::Derived("default").to_string(),
+            "derived(default)"
+        );
+    }
+
+    #[test]
+    fn config_gate_item_constructor_preserves_fields() {
+        let item = ConfigGateItem::new(
+            "token",
+            Some("secret".to_string()),
+            ConfigValueSource::Platform("env"),
+            true,
+        );
+        assert_eq!(item.name, "token");
+        assert_eq!(item.value.as_deref(), Some("secret"));
+        assert!(item.required);
+        assert_eq!(item.source.to_string(), "platform(env)");
+    }
+
+    #[test]
+    fn debug_enabled_accepts_known_truthy_values() {
+        let _env_guard = crate::test_env_lock().lock().unwrap();
+        for value in ["1", "true", "yes"] {
+            unsafe {
+                env::set_var("GREENTIC_OPERATOR_DEMO_DEBUG", value);
+            }
+            assert!(debug_enabled());
+        }
+        unsafe {
+            env::remove_var("GREENTIC_OPERATOR_DEMO_DEBUG");
+        }
+        assert!(!debug_enabled());
+    }
+}

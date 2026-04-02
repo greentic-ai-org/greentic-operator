@@ -247,3 +247,79 @@ fn terminate_process(pid: u32, graceful_timeout_ms: u64) -> anyhow::Result<()> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime_state::RuntimePaths;
+    use tempfile::tempdir;
+
+    #[test]
+    fn service_id_rejects_empty_and_invalid_values() {
+        assert!(ServiceId::new("").is_err());
+        assert!(ServiceId::new("bad id").is_err());
+        assert_eq!(ServiceId::new("good_id-1").unwrap().as_str(), "good_id-1");
+    }
+
+    #[test]
+    fn spawn_service_rejects_empty_argv() {
+        let dir = tempdir().unwrap();
+        let paths = RuntimePaths::new(dir.path().join("state"), "demo", "default");
+        let spec = ServiceSpec {
+            id: ServiceId::new("empty").unwrap(),
+            argv: Vec::new(),
+            cwd: None,
+            env: BTreeMap::new(),
+        };
+        let err = spawn_service(&paths, spec, None).unwrap_err().to_string();
+        assert!(err.contains("service argv cannot be empty"));
+    }
+
+    #[test]
+    fn read_status_ignores_non_pid_files_and_uses_resolved_log_path() -> anyhow::Result<()> {
+        let dir = tempdir()?;
+        let paths = RuntimePaths::new(dir.path().join("state"), "demo", "default");
+        std::fs::create_dir_all(paths.pids_dir())?;
+        std::fs::write(paths.pids_dir().join("ignore.txt"), "123")?;
+        std::fs::write(paths.pid_path("svc"), "999999")?;
+        write_json(
+            &paths.resolved_path("svc"),
+            &ResolvedService {
+                argv: vec!["echo".to_string()],
+                cwd: None,
+                env: BTreeMap::new(),
+                log_path: Some(PathBuf::from("/tmp/custom-service.log")),
+            },
+        )?;
+
+        let statuses = read_status(&paths)?;
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0].id.as_str(), "svc");
+        assert!(!statuses[0].running);
+        assert_eq!(statuses[0].pid, Some(999999));
+        assert_eq!(
+            statuses[0].log_path,
+            PathBuf::from("/tmp/custom-service.log")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn stop_pidfile_removes_stale_pid_files() -> anyhow::Result<()> {
+        let dir = tempdir()?;
+        let pid_path = dir.path().join("svc.pid");
+        std::fs::write(&pid_path, "999999")?;
+        stop_pidfile(&pid_path, 1)?;
+        assert!(!pid_path.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn read_resolved_returns_none_when_service_is_unknown() -> anyhow::Result<()> {
+        let dir = tempdir()?;
+        let paths = RuntimePaths::new(dir.path().join("state"), "demo", "default");
+        let service_id = ServiceId::new("missing")?;
+        assert!(read_resolved(&paths, &service_id)?.is_none());
+        Ok(())
+    }
+}

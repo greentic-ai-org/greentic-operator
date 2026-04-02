@@ -1496,6 +1496,11 @@ fn parse_legacy_route(segments: &[&str]) -> Option<ParsedIngressRoute> {
     })
 }
 
+#[doc(hidden)]
+pub fn benchmark_parse_ingress_route(path: &str) -> bool {
+    parse_route_segments(path).is_some()
+}
+
 fn error_response(status: StatusCode, message: impl Into<String>) -> Response<Full<Bytes>> {
     let body = json!({
         "success": false,

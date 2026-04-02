@@ -155,6 +155,9 @@ mod tests {
     fn writes_operator_log() -> anyhow::Result<()> {
         let dir = tempdir()?;
         let _ = init(dir.path().to_path_buf(), Level::Info)?;
+        let service_log = reserve_service_log(dir.path(), "gateway")?;
+        assert_eq!(service_log, service_log_path(dir.path(), "gateway"));
+        assert!(service_log.exists());
         info("tests::writes_operator_log", "hello world");
         let contents = fs::read_to_string(dir.path().join("operator.log"))?;
         assert!(contents.contains("hello world"));

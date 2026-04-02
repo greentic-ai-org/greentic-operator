@@ -105,4 +105,28 @@ mod tests {
         assert_eq!(value, b"hello world".to_vec());
         Ok(())
     }
+
+    #[test]
+    fn write_and_delete_are_rejected_for_read_only_store() -> anyhow::Result<()> {
+        let dir = tempdir()?;
+        let store_path = dir.path().join("secrets.env");
+        let client = SecretsClient::open_with_path(store_path.clone())?;
+        let runtime = Runtime::new()?;
+
+        let write_err = runtime
+            .block_on(async {
+                client
+                    .write("secrets://demo/acme/_/mypack/key", b"value")
+                    .await
+            })
+            .unwrap_err();
+        assert!(matches!(write_err, SecretError::Permission(_)));
+
+        let delete_err = runtime
+            .block_on(async { client.delete("secrets://demo/acme/_/mypack/key").await })
+            .unwrap_err();
+        assert!(matches!(delete_err, SecretError::Permission(_)));
+        assert_eq!(client.store_path(), Some(store_path.as_path()));
+        Ok(())
+    }
 }
