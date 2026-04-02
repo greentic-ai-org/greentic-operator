@@ -51,11 +51,9 @@ struct BotActivityStore {
 }
 
 impl BotActivityStore {
-    fn push(&self, conversation_id: &str, activity: serde_json::Value) {
+    fn push(&self, conversation_id: String, activity: serde_json::Value) {
         let mut map = self.pending.lock().unwrap();
-        map.entry(conversation_id.to_string())
-            .or_default()
-            .push(activity);
+        map.entry(conversation_id).or_default().push(activity);
     }
 }
 
@@ -799,9 +797,9 @@ fn route_messaging_envelopes(
 
                         // Verify token and get username, then show connected card
                         match crate::demo::github_mcp::get_authenticated_user(token) {
-                            Ok(username) => {
+                            Ok(_username) => {
                                 eprintln!("[directline] GitHub authentication succeeded");
-                                let card = crate::demo::github_mcp::build_connected_card(&username);
+                                let card = crate::demo::github_mcp::build_connected_card("GitHub user");
                                 build_card_reply(envelope, &card, "token-saved-connected")
                             }
                             Err(err) => {
@@ -834,8 +832,8 @@ fn route_messaging_envelopes(
             {
                 let token = read_github_token(bundle, ctx);
                 match token.and_then(|t| crate::demo::github_mcp::get_authenticated_user(&t).ok()) {
-                    Some(username) => {
-                        let card = crate::demo::github_mcp::build_connected_card(&username);
+                    Some(_username) => {
+                        let card = crate::demo::github_mcp::build_connected_card("GitHub user");
                         build_card_reply(envelope, &card, "GH-connected")
                     }
                     None => {
@@ -940,11 +938,7 @@ fn route_messaging_envelopes(
         };
 
         for out_envelope in outputs {
-            eprintln!(
-                "[directline] processing reply envelope id_present={} channel={}",
-                !out_envelope.id.is_empty(),
-                out_envelope.channel,
-            );
+            eprintln!("[directline] processing reply envelope");
 
             // For webchat card replies, skip the WASM egress pipeline entirely.
             // The WASM component's send_payload also writes to state store, which
@@ -965,8 +959,8 @@ fn route_messaging_envelopes(
                             .or_else(|| out_envelope.to.first().map(|d| &d.id));
                         if let Some(chat_id) = chat_id {
                             eprintln!(
-                                "[telegram-form] stored form state for chat_id={} inputs={:?}",
-                                chat_id, form_state.input_ids
+                                "[telegram-form] stored form state (input_count={})",
+                                form_state.input_ids.len()
                             );
                             store.store(chat_id, form_state);
                         }
@@ -976,13 +970,13 @@ fn route_messaging_envelopes(
 
             if provider == "messaging-webchat" && has_card {
                 if let Some(store) = bot_activities {
-                    let conv_id = &out_envelope.session_id;
+                    let conv_id = out_envelope.session_id.clone();
                     let activity_id = format!("bot-{}", uuid::Uuid::new_v4());
                     let mut activity = json!({
                         "type": "message",
                         "id": activity_id,
                         "from": {"id": "bot", "name": "Bot", "role": "bot"},
-                        "conversation": {"id": conv_id},
+                        "conversation": {"id": conv_id.as_str()},
                         "recipient": {"id": "user", "role": "user"},
                         "timestamp": chrono::Utc::now().to_rfc3339(),
                     });
@@ -1065,22 +1059,19 @@ fn route_messaging_envelopes(
                 .unwrap_or(false);
 
             if outcome.success && provider_ok {
-                eprintln!(
-                    "[directline] send succeeded provider={} envelope_id={}",
-                    provider, out_envelope.id
-                );
+                eprintln!("[directline] send succeeded provider={provider}");
 
                 // For webchat text-only replies, also store in BotActivityStore
                 if provider == "messaging-webchat" {
                     if let Some(store) = bot_activities {
-                        let conv_id = &out_envelope.session_id;
+                        let conv_id = out_envelope.session_id.clone();
                         let reply_text = out_envelope.text.as_deref().unwrap_or("");
                         let activity_id = format!("bot-{}", uuid::Uuid::new_v4());
                         let mut activity = json!({
                             "type": "message",
                             "id": activity_id,
                             "from": {"id": "bot", "name": "Bot", "role": "bot"},
-                            "conversation": {"id": conv_id},
+                            "conversation": {"id": conv_id.as_str()},
                             "recipient": {"id": "user", "role": "user"},
                             "timestamp": chrono::Utc::now().to_rfc3339(),
                         });

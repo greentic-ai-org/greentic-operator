@@ -2,8 +2,15 @@
 .github/workflows/perf.yml
 Cargo.lock
 Cargo.toml
+SECURITY_FIX_REPORT.md
+all-code-scanning-alerts.json
 benches/perf.rs
+code-scanning-alerts.json
+codex-prompt.txt
 coverage-policy.json
+pr-changed-files.txt
+pr-code-scanning-filtered.json
+security-alerts.json
 src/bin_resolver.rs
 src/cli.rs
 src/cloudflared.rs

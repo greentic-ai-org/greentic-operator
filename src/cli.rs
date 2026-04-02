@@ -5886,11 +5886,7 @@ fn run_plan_item(
             });
         match persist_result {
             Ok(saved) if !saved.is_empty() => {
-                eprintln!(
-                    "persisted secret(s) for provider={} (count={})",
-                    provider_id,
-                    saved.len()
-                );
+                eprintln!("persisted secret(s) for provider={}", provider_id);
             }
             Err(err) => {
                 operator_log::warn(
