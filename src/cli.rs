@@ -6411,6 +6411,7 @@ fn build_demo_send_message(args: DemoSendMessageArgs<'_>) -> JsonValue {
         text: args.text.map(|value| value.to_string()),
         attachments: Vec::new(),
         metadata,
+        extensions: BTreeMap::new(),
     };
     serde_json::to_value(envelope).unwrap_or(JsonValue::Null)
 }
