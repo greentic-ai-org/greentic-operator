@@ -5886,10 +5886,9 @@ fn run_plan_item(
         match persist_result {
             Ok(saved) if !saved.is_empty() => {
                 eprintln!(
-                    "persisted {} secret(s) for provider={}: {:?}",
+                    "persisted {} secret(s) for provider={}",
                     saved.len(),
-                    provider_id,
-                    saved
+                    provider_id
                 );
             }
             Err(err) => {
