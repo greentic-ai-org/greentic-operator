@@ -5886,10 +5886,9 @@ fn run_plan_item(
         match persist_result {
             Ok(saved) if !saved.is_empty() => {
                 eprintln!(
-                    "persisted {} secret(s) for provider={}: {:?}",
+                    "persisted {} secret(s) for provider={}",
                     saved.len(),
-                    provider_id,
-                    saved
+                    provider_id
                 );
             }
             Err(err) => {
@@ -6411,6 +6410,7 @@ fn build_demo_send_message(args: DemoSendMessageArgs<'_>) -> JsonValue {
         text: args.text.map(|value| value.to_string()),
         attachments: Vec::new(),
         metadata,
+        extensions: BTreeMap::new(),
     };
     serde_json::to_value(envelope).unwrap_or(JsonValue::Null)
 }
