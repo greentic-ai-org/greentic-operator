@@ -4023,7 +4023,7 @@ impl DemoSendArgs {
             ));
         }
         let mut arg_entries = args.iter().collect::<Vec<_>>();
-        arg_entries.sort_by(|(a, _), (b, _)| a.cmp(b));
+        arg_entries.sort_by_key(|(a, _)| *a);
         for (key, value) in arg_entries {
             config_items.push(ConfigGateItem::new(
                 key.as_str(),
