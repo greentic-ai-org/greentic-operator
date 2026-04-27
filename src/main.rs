@@ -366,7 +366,7 @@ fn localize_help_text(rendered: &str) -> String {
         }
         pairs.push((en_value, localized.clone()));
     }
-    pairs.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+    pairs.sort_by_key(|b| std::cmp::Reverse(b.0.len()));
 
     let mut out = rendered.to_string();
     for (from, to) in pairs {

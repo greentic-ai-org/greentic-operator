@@ -61,32 +61,32 @@ features = [
 ]
 
 [dependencies.greentic-distributor-client]
-version = ">=0.5.0-dev, <0.6.0-0"
+version = "0.4"
 features = [
     "pack-fetch",
 ]
 default-features = false
 
 [dependencies.greentic-i18n]
-version = ">=0.5.0-dev, <0.6.0-0"
+version = "0.4"
 
 [dependencies.greentic-setup]
-version = ">=0.5.0-dev, <0.6.0-0"
+version = "0.4"
 
 [dependencies.greentic-runner-desktop]
-version = ">=0.5.0-dev, <0.6.0-0"
+version = "0.4"
 
 [dependencies.greentic-runner-host]
-version = ">=0.5.0-dev, <0.6.0-0"
+version = "0.4"
 
 [dependencies.greentic-secrets-lib]
-version = ">=0.5.0-dev, <0.6.0-0"
+version = "0.4"
 features = [
     "providers-dev",
 ]
 
 [dependencies.greentic-types]
-version = ">=0.5.0-dev, <0.6.0-0"
+version = "0.4"
 features = [
     "serde",
 ]
@@ -116,7 +116,7 @@ version = "0.2"
 version = "1.21"
 
 [dependencies.qa-spec]
-version = ">=0.5.0-dev, <0.6.0-0"
+version = "0.4"
 
 [dependencies.rand]
 version = "0.10"
