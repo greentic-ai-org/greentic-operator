@@ -1,6 +1,10 @@
+bin = [
+    { name = "greentic-operator", path = "src/main.rs" },
+]
+
 [package]
 name = "greentic-operator"
-version = "0.4.49"
+version = "0.5.0-dev.0"
 edition = "2024"
 rust-version = "1.91"
 description = "Greentic operator CLI for local dev and demo orchestration."
@@ -23,83 +27,172 @@ pkg-url = "{ repo }/releases/download/v{ version }/{ name }-v{ version }-{ targe
 pkg-fmt = "tgz"
 bin-dir = "{ name }-v{ version }-{ target }/{ bin }{ binary-ext }"
 targets = [
-  "x86_64-unknown-linux-gnu",
-  "aarch64-unknown-linux-gnu",
-  "x86_64-apple-darwin",
-  "aarch64-apple-darwin",
-  "x86_64-pc-windows-msvc",
-  "aarch64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
 ]
-
-[[bin]]
-name = "greentic-operator"
-path = "src/main.rs"
-
 
 [dependencies]
 anyhow = "1.0"
 async-trait = "0.1"
 base64 = "0.22"
 chrono = "0.4"
-clap = { version = "4.5", features = ["derive"] }
 directories-next = "2"
-greentic-distributor-client = { version = "0.4", default-features = false, features = ["pack-fetch"] }
-greentic-setup = "0.4"
-greentic-i18n = "0.4"
-greentic-interfaces = { version = "0.4" }
-greentic-interfaces-guest = { version = "0.4" }
-greentic-interfaces-host = { version = "0.4" }
-greentic-interfaces-wasmtime = { version = "0.4" }
-greentic-qa-lib = "0.4"
-greentic-runner-desktop = { version = "0.4" }
-greentic-runner-host = { version = "0.4" }
-greentic-secrets-lib = { version = "0.4", features = ["providers-dev"] }
-greentic-start = "0.4"
-greentic-state = "0.4"
-greentic-telemetry = { version = "0.4", features = ["otlp", "fmt"] }
-greentic-types = { version = "0.4", features = ["serde"] }
+greentic-setup = ">=0.5.0-dev, <0.6.0-0"
+greentic-i18n = ">=0.5.0-dev, <0.6.0-0"
+greentic-qa-lib = ">=0.5.0-dev, <0.6.0-0"
+greentic-start = ">=0.5.0-dev, <0.6.0-0"
+greentic-state = ">=0.5.0-dev, <0.6.0-0"
 http-body-util = "0.1"
-hyper = { version = "1", features = ["full"] }
 hyper-util = "0.1"
 include_dir = "0.7"
 jsonschema = "0.45"
 libc = "0.2"
-oci-distribution = { version = "0.11", default-features = false, features = ["rustls-tls"] }
 once_cell = "1.21"
-qa-spec = "0.4"
+qa-spec = ">=0.5.0-dev, <0.6.0-0"
 rand = "0.10"
 rpassword = "7"
 semver = "1"
-serde = { version = "1.0", features = ["derive"] }
 serde_cbor = "0.11"
 serde_json = "1.0"
-serde_yaml_bw = { package = "serde_yaml_gtc", version = "2.5.2" }
 sys-locale = "0.3"
 sysinfo = "0.38"
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "signal", "net"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
 tar = "0.4"
-ureq = { version = "3", features = ["json"] }
 unic-langid = "0.9"
-uuid = { version = "1", features = ["v4"] }
 zip = "8"
+
+[dependencies.clap]
+version = "4.5"
+features = [
+    "derive",
+]
+
+[dependencies.greentic-distributor-client]
+version = ">=0.5.0-dev, <0.6.0-0"
+default-features = false
+features = [
+    "pack-fetch",
+]
+
+[dependencies.greentic-interfaces]
+version = ">=0.5.0-dev, <0.6.0-0"
+
+[dependencies.greentic-interfaces-guest]
+version = ">=0.5.0-dev, <0.6.0-0"
+
+[dependencies.greentic-interfaces-host]
+version = ">=0.5.0-dev, <0.6.0-0"
+
+[dependencies.greentic-interfaces-wasmtime]
+version = ">=0.5.0-dev, <0.6.0-0"
+
+[dependencies.greentic-runner-desktop]
+version = ">=0.5.0-dev, <0.6.0-0"
+
+[dependencies.greentic-runner-host]
+version = ">=0.5.0-dev, <0.6.0-0"
+
+[dependencies.greentic-secrets-lib]
+version = ">=0.5.0-dev, <0.6.0-0"
+features = [
+    "providers-dev",
+]
+
+[dependencies.greentic-telemetry]
+version = ">=0.5.0-dev, <0.6.0-0"
+features = [
+    "otlp",
+    "fmt",
+]
+
+[dependencies.greentic-types]
+version = ">=0.5.0-dev, <0.6.0-0"
+features = [
+    "serde",
+]
+
+[dependencies.hyper]
+version = "1"
+features = [
+    "full",
+]
+
+[dependencies.oci-distribution]
+version = "0.11"
+default-features = false
+features = [
+    "rustls-tls",
+]
+
+[dependencies.serde]
+version = "1.0"
+features = [
+    "derive",
+]
+
+[dependencies.serde_yaml_bw]
+package = "serde_yaml_gtc"
+version = "2.5.2"
+
+[dependencies.tokio]
+version = "1"
+features = [
+    "rt-multi-thread",
+    "sync",
+    "signal",
+    "net",
+]
+
+[dependencies.ureq]
+version = "3"
+features = [
+    "json",
+]
+
+[dependencies.uuid]
+version = "1"
+features = [
+    "v4",
+]
 
 [dev-dependencies]
 indexmap = "2"
 tempfile = "3.10"
 
-[workspace.dependencies]
-anyhow = "1.0"
-tempfile = "3.10"
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "signal", "net"] }
-tracing = "0.1"
-tracing-subscriber = "0.3"
-greentic-secrets-lib = { version = "0.4", features = ["providers-dev"] }
-uuid = { version = "1", features = ["v4"] }
-
 [workspace]
 members = [
     "secret_name",
     "crates/greentic-secrets-repro",
+]
+
+[workspace.dependencies]
+anyhow = "1.0"
+tempfile = "3.10"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+[workspace.dependencies.tokio]
+version = "1"
+features = [
+    "rt-multi-thread",
+    "sync",
+    "signal",
+    "net",
+]
+
+[workspace.dependencies.greentic-secrets-lib]
+version = ">=0.5.0-dev, <0.6.0-0"
+features = [
+    "providers-dev",
+]
+
+[workspace.dependencies.uuid]
+version = "1"
+features = [
+    "v4",
 ]
