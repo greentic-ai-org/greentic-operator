@@ -412,7 +412,7 @@ mod tests {
         std::fs::create_dir_all(&bundle).unwrap();
         let source = temp.path().join("registry.json");
         std::fs::write(&source, "[]").unwrap();
-        let reference = "oci://ghcr.io/greenticai/registries/providers:latest";
+        let reference = "oci://ghcr.io/greenticai/registries/providers:stable";
         let cached = cache_registry_file(&bundle, reference, &source).unwrap();
         assert!(cached.exists());
 
@@ -433,14 +433,14 @@ mod tests {
         std::fs::write(&digest_path, "[]").unwrap();
         let mut index = ProviderRegistryCacheIndex::default();
         index.refs.insert(
-            "oci://ghcr.io/greenticai/registries/providers:latest".to_string(),
+            "oci://ghcr.io/greenticai/registries/providers:stable".to_string(),
             digest.to_string(),
         );
         write_cache_index(&bundle, &index).unwrap();
 
         let resolved = resolve_catalog_path(
             None,
-            Some("oci://ghcr.io/greenticai/registries/providers:latest"),
+            Some("oci://ghcr.io/greenticai/registries/providers:stable"),
             true,
             false,
             &bundle,

@@ -729,7 +729,7 @@ enum WizardAccessChangeAnswer {
     },
 }
 
-const DEFAULT_PROVIDER_REGISTRY_REF: &str = "oci://ghcr.io/greenticai/registries/providers:latest";
+const DEFAULT_PROVIDER_REGISTRY_REF: &str = "oci://ghcr.io/greenticai/registries/providers:stable";
 #[derive(Parser)]
 #[command(
     about = "Show demo service status using runtime state.",
