@@ -103,7 +103,7 @@ fn demo_up_uses_in_process_events_when_events_packs_exist() {
 team: default
 services:
   messaging:
-    enabled: false
+    enabled: "false"
   nats:
     enabled: true
     url: "nats://127.0.0.1:4222"
