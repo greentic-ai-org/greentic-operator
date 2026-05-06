@@ -4,7 +4,7 @@ bin = [
 
 [package]
 name = "greentic-operator"
-version = "0.5.0-dev.1"
+version = "1.1.0-dev.0"
 edition = "2024"
 rust-version = "1.91"
 description = "Greentic operator CLI for local dev and demo orchestration."
@@ -41,18 +41,18 @@ async-trait = "0.1"
 base64 = "0.22"
 chrono = "0.4"
 directories-next = "2"
-greentic-setup = "0.4"
-greentic-i18n = "0.4"
-greentic-qa-lib = "0.4"
-greentic-start = "0.4"
-greentic-state = "0.4"
+greentic-setup = ">=1.1.0-dev, <1.2.0-0"
+greentic-i18n = ">=1.1.0-dev, <1.2.0-0"
+greentic-qa-lib = ">=1.1.0-dev, <1.2.0-0"
+greentic-start = ">=1.1.0-dev, <1.2.0-0"
+greentic-state = ">=1.1.0-dev, <1.2.0-0"
 http-body-util = "0.1"
 hyper-util = "0.1"
 include_dir = "0.7"
 jsonschema = "0.45"
 libc = "0.2"
 once_cell = "1.21"
-qa-spec = "0.4"
+qa-spec = ">=1.1.0-dev, <1.2.0-0"
 rand = "0.10"
 rpassword = "7"
 semver = "1"
@@ -73,45 +73,45 @@ features = [
 ]
 
 [dependencies.greentic-distributor-client]
-version = "0.4"
+version = ">=1.1.0-dev, <1.2.0-0"
 default-features = false
 features = [
     "pack-fetch",
 ]
 
 [dependencies.greentic-interfaces]
-version = "0.4"
+version = ">=1.1.0-dev, <1.2.0-0"
 
 [dependencies.greentic-interfaces-guest]
-version = "0.4"
+version = ">=1.1.0-dev, <1.2.0-0"
 
 [dependencies.greentic-interfaces-host]
-version = "0.4"
+version = ">=1.1.0-dev, <1.2.0-0"
 
 [dependencies.greentic-interfaces-wasmtime]
-version = "0.4"
+version = ">=1.1.0-dev, <1.2.0-0"
 
 [dependencies.greentic-runner-desktop]
-version = "0.4"
+version = ">=1.1.0-dev, <1.2.0-0"
 
 [dependencies.greentic-runner-host]
-version = "0.4"
+version = ">=1.1.0-dev, <1.2.0-0"
 
 [dependencies.greentic-secrets-lib]
-version = "0.4"
+version = ">=1.1.0-dev, <1.2.0-0"
 features = [
     "providers-dev",
 ]
 
 [dependencies.greentic-telemetry]
-version = "0.4"
+version = ">=1.1.0-dev, <1.2.0-0"
 features = [
     "otlp",
     "fmt",
 ]
 
 [dependencies.greentic-types]
-version = "0.4"
+version = ">=1.1.0-dev, <1.2.0-0"
 features = [
     "serde",
 ]
@@ -186,7 +186,7 @@ features = [
 ]
 
 [workspace.dependencies.greentic-secrets-lib]
-version = "0.4"
+version = ">=1.1.0-dev, <1.2.0-0"
 features = [
     "providers-dev",
 ]

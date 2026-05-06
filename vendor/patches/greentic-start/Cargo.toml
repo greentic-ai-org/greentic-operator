@@ -6,7 +6,7 @@ bin = [
 edition = "2024"
 rust-version = "1.91"
 name = "greentic-start"
-version = "0.5.0-dev.0"
+version = "1.1.0-dev.0"
 build = false
 autolib = false
 autobins = false
@@ -61,32 +61,32 @@ features = [
 ]
 
 [dependencies.greentic-distributor-client]
-version = "0.4"
+version = ">=1.1.0-dev, <1.2.0-0"
 features = [
     "pack-fetch",
 ]
 default-features = false
 
 [dependencies.greentic-i18n]
-version = "0.4"
+version = ">=1.1.0-dev, <1.2.0-0"
 
 [dependencies.greentic-setup]
-version = "0.4"
+version = ">=1.1.0-dev, <1.2.0-0"
 
 [dependencies.greentic-runner-desktop]
-version = "0.4"
+version = ">=1.1.0-dev, <1.2.0-0"
 
 [dependencies.greentic-runner-host]
-version = "0.4"
+version = ">=1.1.0-dev, <1.2.0-0"
 
 [dependencies.greentic-secrets-lib]
-version = "0.4"
+version = ">=1.1.0-dev, <1.2.0-0"
 features = [
     "providers-dev",
 ]
 
 [dependencies.greentic-types]
-version = "0.4"
+version = ">=1.1.0-dev, <1.2.0-0"
 features = [
     "serde",
 ]
@@ -116,7 +116,7 @@ version = "0.2"
 version = "1.21"
 
 [dependencies.qa-spec]
-version = "0.4"
+version = ">=1.1.0-dev, <1.2.0-0"
 
 [dependencies.rand]
 version = "0.10"
