@@ -70,6 +70,7 @@ fn simple_flow(flow_id: &str) -> anyhow::Result<Flow> {
             output: OutputMapping {
                 mapping: Value::Null,
             },
+            err_map: None,
             routing: Routing::End,
             telemetry: TelemetryHints::default(),
         },
@@ -155,6 +156,7 @@ services:
         None,
         &log_dir,
         true,
+        false,
     )
     .unwrap();
 

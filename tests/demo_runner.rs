@@ -86,6 +86,7 @@ fn blocking_pack_manifest(pack_id: &str) -> Result<PackManifest> {
             output: OutputMapping {
                 mapping: Value::Null,
             },
+            err_map: None,
             routing: Routing::Next {
                 node_id: NodeId::new("final").unwrap(),
             },
@@ -107,6 +108,7 @@ fn blocking_pack_manifest(pack_id: &str) -> Result<PackManifest> {
             output: OutputMapping {
                 mapping: Value::Null,
             },
+            err_map: None,
             routing: Routing::End,
             telemetry: TelemetryHints::default(),
         },
