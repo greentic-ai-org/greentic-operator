@@ -266,19 +266,20 @@ impl LegacyTelemetryProviderConfig {
             .map(parse_compression)
             .transpose()?;
 
+        let mut export = ExportConfig::json_default();
+        export.mode = mode;
+        export.endpoint = endpoint;
+        export.headers = headers;
+        export.sampling = sampling;
+        export.compression = compression.map(|value| match value {
+            CompressionCompat::Gzip => RuntimeCompression::Gzip,
+        });
+
         Ok((
             greentic_telemetry::TelemetryConfig {
                 service_name: self.service_name().to_string(),
             },
-            ExportConfig {
-                mode,
-                endpoint,
-                headers,
-                sampling,
-                compression: compression.map(|value| match value {
-                    CompressionCompat::Gzip => RuntimeCompression::Gzip,
-                }),
-            },
+            export,
         ))
     }
 }
