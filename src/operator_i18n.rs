@@ -10,6 +10,15 @@ pub type Map = BTreeMap<String, String>;
 static OPERATOR_CLI_I18N: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/i18n/operator_cli");
 static CURRENT_LOCALE: Lazy<RwLock<String>> = Lazy::new(|| RwLock::new(select_locale(None)));
 
+pub fn normalize_locale(value: &str) -> String {
+    let lower = value.replace('_', "-").to_ascii_lowercase();
+    match lower.split('-').next() {
+        Some("en") => "en".to_string(),
+        Some(primary) if !primary.is_empty() => primary.to_string(),
+        _ => "en".to_string(),
+    }
+}
+
 pub fn select_locale(cli_locale: Option<&str>) -> String {
     let supported = supported_locales();
 
@@ -37,7 +46,7 @@ pub fn select_locale(cli_locale: Option<&str>) -> String {
 }
 
 pub fn set_locale(locale: impl Into<String>) {
-    let normalized = greentic_i18n::normalize_locale(&locale.into());
+    let normalized = normalize_locale(&locale.into());
     if let Ok(mut guard) = CURRENT_LOCALE.write() {
         *guard = normalized;
     }
@@ -95,7 +104,7 @@ fn locale_candidates(locale: &str) -> Vec<String> {
     let trimmed = locale.trim();
     if !trimmed.is_empty() {
         push_candidate(format!("{}.json", trimmed));
-        let primary = greentic_i18n::normalize_locale(trimmed);
+        let primary = normalize_locale(trimmed);
         push_candidate(format!("{}.json", primary));
     }
     push_candidate("en.json".to_string());
