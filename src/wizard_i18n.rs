@@ -2,6 +2,8 @@ use anyhow::Context;
 use greentic_qa_lib::ResolvedI18nMap;
 use include_dir::{Dir, include_dir};
 
+use crate::operator_i18n::normalize_locale;
+
 static WIZARD_I18N: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/i18n/operator_wizard");
 
 pub fn load(locale: &str) -> anyhow::Result<ResolvedI18nMap> {
@@ -34,7 +36,7 @@ fn locale_candidates(locale: &str) -> Vec<String> {
             push_candidate(format!("{}.json", canonical));
         }
 
-        let primary = greentic_i18n::normalize_locale(trimmed);
+        let primary = normalize_locale(trimmed);
         push_candidate(format!("{}.json", primary));
     }
     push_candidate("en-GB.json".to_string());
