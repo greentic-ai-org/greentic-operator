@@ -57,6 +57,7 @@ services:
         None,
         &log_dir,
         true,
+        false,
     )
     .unwrap();
 

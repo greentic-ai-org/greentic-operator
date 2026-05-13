@@ -1909,10 +1909,12 @@ impl DemoUpArgs {
             log_dir: self.log_dir.clone(),
             verbose: self.verbose,
             quiet: self.quiet,
+            no_browser: false,
             admin: false,
             admin_port: 8443,
             admin_certs_dir: None,
             admin_allowed_clients: Vec::new(),
+            tunnel_explicit: false,
         }
     }
 }
