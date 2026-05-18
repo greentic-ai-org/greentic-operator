@@ -141,6 +141,45 @@ fn op_env_create_then_list_roundtrips_against_tempdir_store() {
 }
 
 #[test]
+fn op_env_show_missing_emits_json_error_envelope() {
+    let dir = tempdir().expect("tempdir");
+    let out = Command::new(operator_bin())
+        .args([
+            "op",
+            "--store-root",
+            dir.path().to_str().unwrap(),
+            "env",
+            "show",
+            "definitely-not-an-env",
+        ])
+        .output()
+        .expect("spawn show");
+    assert!(
+        !out.status.success(),
+        "expected non-zero exit for missing env; stdout: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+
+    // The envelope is written to stderr; stdout must stay clean so callers
+    // that pipe success JSON through jq don't see error noise on the data
+    // stream.
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let envelope: serde_json::Value = serde_json::from_str(stderr.trim()).unwrap_or_else(|err| {
+        panic!("stderr is not JSON (err={err}): {stderr}");
+    });
+    assert_eq!(envelope["op"], "show");
+    assert_eq!(envelope["noun"], "env");
+    assert_eq!(envelope["error"]["kind"], "not-found");
+    assert!(
+        envelope["error"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("definitely-not-an-env")),
+        "error.message should mention the missing env id: {}",
+        envelope["error"]
+    );
+}
+
+#[test]
 fn op_env_schema_dumps_payload_schema() {
     let dir = tempdir().expect("tempdir");
     let out = Command::new(operator_bin())
