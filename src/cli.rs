@@ -85,6 +85,10 @@ pub struct Cli {
 #[derive(Subcommand)]
 enum Command {
     Demo(Box<DemoCommand>),
+    /// `gtc op …` command surface (A3 of plans/next-gen-deployment.md).
+    /// Operates on the local `EnvironmentStore` rooted at
+    /// `~/.greentic/environments` (or `--store-root <path>`).
+    Op(Box<greentic_deployer::cli::dispatch::OpCommand>),
 }
 
 #[derive(Parser)]
@@ -1781,6 +1785,9 @@ impl Cli {
         let ctx = AppCtx {};
         match self.command {
             Command::Demo(demo) => demo.run(&ctx),
+            Command::Op(op) => {
+                greentic_deployer::cli::dispatch::dispatch_op(*op).map_err(|e| anyhow::anyhow!(e))
+            }
         }
     }
 }
