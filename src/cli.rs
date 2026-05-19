@@ -2075,7 +2075,11 @@ impl DemoSetupWizardArgs {
         // 1. Collect answers via card wizard
         let answers = qa_setup_wizard::run_interactive_card_wizard(&self.pack, &provider_id)?;
 
-        // 2. Build input payload with collected answers
+        // 2. Build input payload with collected answers. Resolve the env
+        //    through `greentic_setup::resolve_env` so the wizard payload
+        //    reflects the active environment (defaults to `local` per A4b;
+        //    legacy `dev` is remapped with a once-per-process warn).
+        let env = greentic_setup::resolve_env(None);
         let input = json!({
             "tenant": &self.tenant,
             "team": self.team.as_deref().unwrap_or("default"),
@@ -2084,7 +2088,7 @@ impl DemoSetupWizardArgs {
             "config": { "id": &provider_id },
             "msg": {
                 "id": format!("{provider_id}.setup"),
-                "tenant": { "env": "dev", "tenant": &self.tenant },
+                "tenant": { "env": env, "tenant": &self.tenant },
                 "channel": "setup",
                 "session_id": "setup",
             },

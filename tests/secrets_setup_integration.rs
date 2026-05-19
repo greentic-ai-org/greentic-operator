@@ -130,8 +130,10 @@ fn provider_setup_seeds_and_resolves_secret() -> Result<()> {
     let store_path = dev_store_path::ensure_path(&bundle_root)?;
     assert!(store_path.exists());
     let store = DevStore::with_path(store_path.clone())?;
+    // A4b: `resolve_env(None)` now defaults to `local` (was `dev`); the
+    // seeded URI scope must match.
     let uri = secrets_gate::canonical_secret_uri(
-        "dev",
+        "local",
         "demo",
         Some("default"),
         "messaging-telegram",
