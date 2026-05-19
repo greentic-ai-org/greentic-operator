@@ -1785,114 +1785,16 @@ impl Cli {
         let ctx = AppCtx {};
         match self.command {
             Command::Demo(demo) => demo.run(&ctx),
-            Command::Op(op) => run_op_command(*op),
+            // `dispatch_op` itself writes the `{op, noun, error: {kind, message}}`
+            // envelope to stderr on failure (greentic-deployer >=1.1.0-dev.26079178340),
+            // so we swallow the `OpError` here and exit 1 directly — letting it
+            // propagate through `anyhow` would print a duplicate plain
+            // `Error: …` line.
+            Command::Op(op) => match greentic_deployer::cli::dispatch::dispatch_op(*op) {
+                Ok(()) => Ok(()),
+                Err(_) => std::process::exit(1),
+            },
         }
-    }
-}
-
-/// Dispatch a `greentic-deployer op …` invocation while preserving the
-/// documented `{op, noun, error: {kind, message}}` envelope on failure.
-/// Without this wrapper an `OpError` would propagate through `anyhow` and
-/// print as plain `Error: …` text, breaking callers that parse stderr for
-/// `error.kind` (idempotency replay, retry logic, etc.).
-fn run_op_command(op: greentic_deployer::cli::dispatch::OpCommand) -> anyhow::Result<()> {
-    let (noun, verb) = op_noun_verb_labels(&op);
-    match greentic_deployer::cli::dispatch::dispatch_op(op) {
-        Ok(()) => Ok(()),
-        Err(err) => {
-            let envelope = greentic_deployer::cli::render_error(noun, verb, &err);
-            eprintln!("{envelope}");
-            std::process::exit(1);
-        }
-    }
-}
-
-/// Map an `OpCommand` to its `(noun, verb)` static label pair.
-///
-/// The deployer's `dispatch_op` consumes `cmd.noun` by value and never
-/// hands the labels back, so the operator boundary has to re-derive them
-/// for envelope rendering. Kept in sync with
-/// `greentic-deployer/src/cli/dispatch.rs`.
-fn op_noun_verb_labels(
-    cmd: &greentic_deployer::cli::dispatch::OpCommand,
-) -> (&'static str, &'static str) {
-    use greentic_deployer::cli::dispatch::{
-        BundlesVerb, ConfigVerb, CredentialsVerb, EnvPacksVerb, EnvVerb, OpNoun, RevisionsVerb,
-        SecretsVerb, TrafficVerb,
-    };
-    match &cmd.noun {
-        OpNoun::Env { verb } => (
-            "env",
-            match verb {
-                EnvVerb::Create => "create",
-                EnvVerb::Update => "update",
-                EnvVerb::List => "list",
-                EnvVerb::Show { .. } => "show",
-                EnvVerb::Doctor { .. } => "doctor",
-                EnvVerb::Destroy { .. } => "destroy",
-            },
-        ),
-        OpNoun::EnvPacks { verb } => (
-            "env-packs",
-            match verb {
-                EnvPacksVerb::Add => "add",
-                EnvPacksVerb::Update => "update",
-                EnvPacksVerb::Remove => "remove",
-                EnvPacksVerb::Rollback => "rollback",
-                EnvPacksVerb::List { .. } => "list",
-            },
-        ),
-        OpNoun::Bundles { verb } => (
-            "bundles",
-            match verb {
-                BundlesVerb::Add => "add",
-                BundlesVerb::Update => "update",
-                BundlesVerb::Remove => "remove",
-                BundlesVerb::List { .. } => "list",
-            },
-        ),
-        OpNoun::Revisions { verb } => (
-            "revisions",
-            match verb {
-                RevisionsVerb::Stage => "stage",
-                RevisionsVerb::Warm => "warm",
-                RevisionsVerb::Drain => "drain",
-                RevisionsVerb::Archive => "archive",
-                RevisionsVerb::List { .. } => "list",
-            },
-        ),
-        OpNoun::Traffic { verb } => (
-            "traffic",
-            match verb {
-                TrafficVerb::Set => "set",
-                TrafficVerb::Show => "show",
-                TrafficVerb::Rollback => "rollback",
-            },
-        ),
-        OpNoun::Config { verb } => (
-            "config",
-            match verb {
-                ConfigVerb::Show => "show",
-                ConfigVerb::Set => "set",
-            },
-        ),
-        OpNoun::Credentials { verb } => (
-            "credentials",
-            match verb {
-                CredentialsVerb::Requirements => "requirements",
-                CredentialsVerb::Bootstrap => "bootstrap",
-                CredentialsVerb::Rotate => "rotate",
-            },
-        ),
-        OpNoun::Secrets { verb } => (
-            "secrets",
-            match verb {
-                SecretsVerb::List => "list",
-                SecretsVerb::Put => "put",
-                SecretsVerb::Get => "get",
-                SecretsVerb::Rotate => "rotate",
-            },
-        ),
     }
 }
 
