@@ -33,12 +33,11 @@ use crate::{
     secrets_gate::canonical_secret_uri,
 };
 
-pub fn resolve_env(override_env: Option<&str>) -> String {
-    override_env
-        .map(|value| value.to_string())
-        .or_else(|| std::env::var("GREENTIC_ENV").ok())
-        .unwrap_or_else(|| "dev".to_string())
-}
+/// Re-export of [`greentic_setup::resolve_env`] so the operator goes
+/// through the same `dev` → `local` compat alias (A4b PR2) and inherits
+/// the `GREENTIC_DISABLE_DEV_ALIAS` hard-fail gate. Local literal-fallback
+/// duplication was removed in PR4 of A4b.
+pub use greentic_setup::resolve_env;
 
 pub struct SecretsSetup {
     store: DevStore,
