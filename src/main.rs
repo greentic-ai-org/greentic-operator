@@ -141,6 +141,13 @@ fn print_top_level_help() {
         operator_i18n::tr("cli.main.help.command_demo", "")
     );
     println!(
+        "  op      {}",
+        operator_i18n::tr(
+            "cli.main.help.command_op",
+            "Operator command surface (env, env-packs, bundles, revisions, traffic, config, credentials, secrets)"
+        )
+    );
+    println!(
         "  help    {}",
         operator_i18n::tr(
             "cli.main.help.command_help",
@@ -397,7 +404,7 @@ fn print_missing_subcommand_help() {
         )
     );
     eprintln!(
-        "  [{}: demo, help]",
+        "  [{}: demo, op, help]",
         operator_i18n::tr("cli.main.subcommands", "subcommands")
     );
     eprintln!();
