@@ -526,7 +526,7 @@ struct DemoWizardArgs {
         long = "env",
         short = 'e',
         default_value = "local",
-        help = "Deployment environment scoping this wizard run (A10)."
+        help = "Deployment environment scoping this wizard run."
     )]
     env: String,
     #[arg(
@@ -578,7 +578,7 @@ struct DemoSetupWizardArgs {
         long = "env",
         short = 'e',
         default_value = "local",
-        help = "Deployment environment scoping this wizard run (A10)."
+        help = "Deployment environment scoping this wizard run."
     )]
     env: String,
     #[arg(long, help = "Setup flow to run (default: setup_default).")]
@@ -1815,11 +1815,10 @@ impl Cli {
 struct AppCtx {}
 
 /// RAII guard that scopes a process env-var to a value for the lifetime
-/// of the guard, restoring (or removing) it on drop. A10 follow-up:
-/// used to align `$GREENTIC_ENV` with the canonical wizard env so the
-/// DemoRunner / secrets manager / capability lookups read the value the
-/// user actually passed via `--env` instead of `DemoCommand::run`'s
-/// `"demo"` default.
+/// of the guard, restoring (or removing) it on drop. Used to align
+/// `$GREENTIC_ENV` with the canonical wizard env so the DemoRunner /
+/// secrets manager / capability lookups read the value the user actually
+/// passed via `--env` instead of `DemoCommand::run`'s `"demo"` default.
 struct EnvVarScope {
     key: &'static str,
     prior: Option<String>,
@@ -2131,14 +2130,12 @@ impl DemoSetupWizardArgs {
         //    through `greentic_setup::resolve_env` so the wizard payload
         //    reflects the active environment (`--env` overrides
         //    `$GREENTIC_ENV`; defaults to `local` per A4b; legacy `dev`
-        //    is remapped with a once-per-process warn).
-        //
-        //    A10 follow-up: scope $GREENTIC_ENV to the canonical value
-        //    around the DemoRunner invocation. Closes the split-brain
-        //    where the payload's `msg.tenant.env` said `local` but
-        //    secrets manager / runner host config read $GREENTIC_ENV
-        //    (defaulted to "demo" by DemoCommand::run L1819). RAII
-        //    guard restores the prior value on every exit path.
+        //    is remapped with a once-per-process warn). Scope
+        //    $GREENTIC_ENV to the canonical value around the DemoRunner
+        //    invocation so the payload's `msg.tenant.env` and the
+        //    indirect readers (secrets manager, runner host config) do
+        //    not diverge. RAII guard restores the prior value on every
+        //    exit path.
         let env = greentic_setup::resolve_env(Some(&self.env));
         let _env_scope = EnvVarScope::set("GREENTIC_ENV", &env);
         let input = json!({
@@ -2209,14 +2206,14 @@ impl DemoWizardArgs {
         let mode: wizard::WizardMode = self.mode.into();
         let effective_locale = self.locale.clone().unwrap_or_else(detect_system_locale_tag);
         let schema_version = resolve_wizard_schema_version(self.schema_version.as_deref());
-        // A10 follow-up: canonicalize env once so both the QA wizard
-        // flow and the run-setup executor see the same env id; without
-        // this, --apply / --run-setup falls back to $GREENTIC_ENV
-        // (defaulted to "demo" by DemoCommand::run) and writes/reads
-        // secrets under the wrong env. Scope $GREENTIC_ENV around the
-        // whole flow so any remaining indirect readers (capability
-        // resolvers, config_gate, plan executors that call
-        // resolve_env(None)) observe the canonical value too.
+        // Canonicalize env once so both the QA wizard flow and the
+        // run-setup executor see the same env id; without this,
+        // --apply / --run-setup falls back to $GREENTIC_ENV (defaulted
+        // to "demo" by DemoCommand::run) and writes/reads secrets under
+        // the wrong env. Scope $GREENTIC_ENV around the whole flow so
+        // any remaining indirect readers (capability resolvers,
+        // config_gate, plan executors that call resolve_env(None))
+        // observe the canonical value too.
         let canonical_env = resolve_env(Some(&self.env));
         let _env_scope = EnvVarScope::set("GREENTIC_ENV", &canonical_env);
         let provider_registry_ref = self
@@ -3897,6 +3894,7 @@ fn run_wizard_setup_for_target(
     allowed_providers: Option<BTreeSet<String>>,
     preloaded_setup_answers: Option<SetupInputAnswers>,
 ) -> anyhow::Result<()> {
+    let secrets_env = Some(env.to_string());
     for domain in [
         Domain::Messaging,
         Domain::Events,
@@ -3918,7 +3916,7 @@ fn run_wizard_setup_for_target(
             allow_contract_change: false,
             backup: false,
             online: false,
-            secrets_env: Some(env.to_string()),
+            secrets_env: secrets_env.clone(),
             runner_binary: None,
             best_effort: true,
             discovered_providers: None,
