@@ -523,6 +523,13 @@ struct DemoWizardArgs {
     #[arg(long, help = "Optional team for allow rules.")]
     team: Option<String>,
     #[arg(
+        long = "env",
+        short = 'e',
+        default_value = "local",
+        help = "Deployment environment scoping this wizard run (A10)."
+    )]
+    env: String,
+    #[arg(
         long = "target",
         help = "Tenant target in tenant[:team] form; repeatable."
     )]
@@ -567,6 +574,13 @@ struct DemoSetupWizardArgs {
     tenant: String,
     #[arg(long, help = "Team ID.")]
     team: Option<String>,
+    #[arg(
+        long = "env",
+        short = 'e',
+        default_value = "local",
+        help = "Deployment environment scoping this wizard run (A10)."
+    )]
+    env: String,
     #[arg(long, help = "Setup flow to run (default: setup_default).")]
     flow: Option<String>,
     #[arg(long, help = "Path to demo bundle (for secrets resolution).")]
@@ -2077,9 +2091,10 @@ impl DemoSetupWizardArgs {
 
         // 2. Build input payload with collected answers. Resolve the env
         //    through `greentic_setup::resolve_env` so the wizard payload
-        //    reflects the active environment (defaults to `local` per A4b;
-        //    legacy `dev` is remapped with a once-per-process warn).
-        let env = greentic_setup::resolve_env(None);
+        //    reflects the active environment (`--env` overrides
+        //    `$GREENTIC_ENV`; defaults to `local` per A4b; legacy `dev`
+        //    is remapped with a once-per-process warn).
+        let env = greentic_setup::resolve_env(Some(&self.env));
         let input = json!({
             "tenant": &self.tenant,
             "team": self.team.as_deref().unwrap_or("default"),
@@ -2194,6 +2209,7 @@ impl DemoWizardArgs {
                 run_wizard_via_qa(
                     mode,
                     &effective_locale,
+                    &resolve_env(Some(&self.env)),
                     prefilled_answers,
                     &qa_provider_labels,
                     self.verbose,
@@ -2730,6 +2746,7 @@ fn parse_wizard_qa_answers_value(value: JsonValue) -> anyhow::Result<WizardQaAns
 fn run_wizard_via_qa(
     mode: wizard::WizardMode,
     locale: &str,
+    env_id: &str,
     initial_answers: JsonValue,
     provider_ids: &[String],
     verbose: bool,
@@ -2746,6 +2763,7 @@ fn run_wizard_via_qa(
             debug: false,
         },
         verbose,
+        env_id: env_id.to_string(),
     };
     let interactive = io::stdin().is_terminal() && io::stdout().is_terminal();
     let result = if interactive {

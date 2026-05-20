@@ -28,6 +28,7 @@ fn wizard_uses_requested_locale_for_question_titles() {
             debug: false,
         },
         verbose: false,
+        env_id: "local".into(),
     })
     .expect("create wizard driver");
 
@@ -69,6 +70,7 @@ fn wizard_uses_primary_language_from_region_locale_tag() {
             debug: false,
         },
         verbose: false,
+        env_id: "local".into(),
     })
     .expect("create wizard driver");
 
