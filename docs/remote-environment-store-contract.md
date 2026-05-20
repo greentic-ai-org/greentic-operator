@@ -151,7 +151,7 @@ MutationResponse {
 |-----------|---------|----------|
 | Create backup | — | `BackupManifest { schema, backup_id, env_id, created_at, generation, integrity, size_bytes }` |
 | List backups | — | `[BackupManifest]` |
-| Restore | `RestoreRequest { backup_id, precondition }` | `RestoreOutcome { restored_generation, etag, integrity }` |
+| Restore | `RestoreRequest { backup_id, precondition }` | `RestoreOutcome { restored_generation, integrity }` (strong ETag via `RestoreOutcome::etag()`, derived from `integrity`) |
 
 `RestoreRequest.precondition` is **mandatory and must pin prior state** — a
 restore is never a create, so a blind restore could clobber a newer generation.
