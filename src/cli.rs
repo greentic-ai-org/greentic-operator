@@ -1814,6 +1814,44 @@ impl Cli {
 
 struct AppCtx {}
 
+/// RAII guard that scopes a process env-var to a value for the lifetime
+/// of the guard, restoring (or removing) it on drop. A10 follow-up:
+/// used to align `$GREENTIC_ENV` with the canonical wizard env so the
+/// DemoRunner / secrets manager / capability lookups read the value the
+/// user actually passed via `--env` instead of `DemoCommand::run`'s
+/// `"demo"` default.
+struct EnvVarScope {
+    key: &'static str,
+    prior: Option<String>,
+}
+
+impl EnvVarScope {
+    fn set(key: &'static str, value: &str) -> Self {
+        let prior = env::var(key).ok();
+        // SAFETY: callers serialize tests + this runs on the binary
+        // entry thread where no other thread is reading the var
+        // concurrently. set_var is unsafe in Rust 2024 edition only
+        // because of multi-threaded racy reads — out of scope here.
+        unsafe {
+            env::set_var(key, value);
+        }
+        Self { key, prior }
+    }
+}
+
+impl Drop for EnvVarScope {
+    fn drop(&mut self) {
+        // SAFETY: see EnvVarScope::set; restoration runs on the same
+        // single-threaded path.
+        unsafe {
+            match &self.prior {
+                Some(value) => env::set_var(self.key, value),
+                None => env::remove_var(self.key),
+            }
+        }
+    }
+}
+
 impl DemoCommand {
     fn run(self, ctx: &AppCtx) -> anyhow::Result<()> {
         if env::var("GREENTIC_ENV").is_err() {
@@ -2094,7 +2132,15 @@ impl DemoSetupWizardArgs {
         //    reflects the active environment (`--env` overrides
         //    `$GREENTIC_ENV`; defaults to `local` per A4b; legacy `dev`
         //    is remapped with a once-per-process warn).
+        //
+        //    A10 follow-up: scope $GREENTIC_ENV to the canonical value
+        //    around the DemoRunner invocation. Closes the split-brain
+        //    where the payload's `msg.tenant.env` said `local` but
+        //    secrets manager / runner host config read $GREENTIC_ENV
+        //    (defaulted to "demo" by DemoCommand::run L1819). RAII
+        //    guard restores the prior value on every exit path.
         let env = greentic_setup::resolve_env(Some(&self.env));
+        let _env_scope = EnvVarScope::set("GREENTIC_ENV", &env);
         let input = json!({
             "tenant": &self.tenant,
             "team": self.team.as_deref().unwrap_or("default"),
@@ -2163,6 +2209,16 @@ impl DemoWizardArgs {
         let mode: wizard::WizardMode = self.mode.into();
         let effective_locale = self.locale.clone().unwrap_or_else(detect_system_locale_tag);
         let schema_version = resolve_wizard_schema_version(self.schema_version.as_deref());
+        // A10 follow-up: canonicalize env once so both the QA wizard
+        // flow and the run-setup executor see the same env id; without
+        // this, --apply / --run-setup falls back to $GREENTIC_ENV
+        // (defaulted to "demo" by DemoCommand::run) and writes/reads
+        // secrets under the wrong env. Scope $GREENTIC_ENV around the
+        // whole flow so any remaining indirect readers (capability
+        // resolvers, config_gate, plan executors that call
+        // resolve_env(None)) observe the canonical value too.
+        let canonical_env = resolve_env(Some(&self.env));
+        let _env_scope = EnvVarScope::set("GREENTIC_ENV", &canonical_env);
         let provider_registry_ref = self
             .provider_registry
             .clone()
@@ -2209,7 +2265,7 @@ impl DemoWizardArgs {
                 run_wizard_via_qa(
                     mode,
                     &effective_locale,
-                    &resolve_env(Some(&self.env)),
+                    &canonical_env,
                     prefilled_answers,
                     &qa_provider_labels,
                     self.verbose,
@@ -2537,6 +2593,7 @@ impl DemoWizardArgs {
                     &plan.bundle,
                     &tenant.tenant,
                     tenant.team.as_deref(),
+                    &canonical_env,
                     self.setup_input.as_ref(),
                     allowed_providers.clone(),
                     preloaded_setup_answers.clone(),
@@ -3835,6 +3892,7 @@ fn run_wizard_setup_for_target(
     bundle: &Path,
     tenant: &str,
     team: Option<&str>,
+    env: &str,
     setup_input: Option<&PathBuf>,
     allowed_providers: Option<BTreeSet<String>>,
     preloaded_setup_answers: Option<SetupInputAnswers>,
@@ -3860,7 +3918,7 @@ fn run_wizard_setup_for_target(
             allow_contract_change: false,
             backup: false,
             online: false,
-            secrets_env: None,
+            secrets_env: Some(env.to_string()),
             runner_binary: None,
             best_effort: true,
             discovered_providers: None,
