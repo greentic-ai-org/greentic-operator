@@ -50,8 +50,14 @@ Every **mutating** request:
 | Header | Required | Meaning |
 |--------|----------|---------|
 | `Idempotency-Key` | yes | Non-empty, ULID recommended. See [Idempotency](#idempotency-2). Maps to `IdempotencyKey`. |
-| `If-Match` | conditional | Strong ETag of the resource the caller last observed. Required for `update`-class verbs; omitted only for create-if-absent. See [Concurrency](#concurrency-1). |
+| `If-Match` | conditional | Strong ETag of the resource the caller last observed. Required for `update`/`destroy`/`rollback`-class verbs (any guarded write); omitted only for create-if-absent. See [Concurrency](#concurrency-1). |
 | `Expected-Generation` | optional | Integer generation the caller expects. Belt-and-suspenders alongside `If-Match`. Maps to `Precondition.expected_generation`. |
+
+A **guarded** write (anything that is not create-if-absent) must pin at least
+one of `If-Match` / `Expected-Generation`. A request that pins neither is **not**
+treated as an unconditional overwrite — it is rejected with `428 Precondition
+Required` (`Precondition::check` → `PreconditionError::Required`). This prevents a
+stale or malformed client from blindly clobbering a newer generation.
 
 Every response that reflects committed state carries:
 
@@ -65,34 +71,46 @@ Optimistic concurrency. `StateEtag` is a **strong** validator: the SHA-256 of
 the resource's canonical JSON (identical to the `StateIntegrity` digest). Each
 resource also carries a monotonic `generation: u64`.
 
-A mutating request pins the prior state via `If-Match` (ETag), `Expected-Generation`,
-or both — the `Precondition` type. The server evaluates `Precondition::check`
-against current state:
+A guarded mutating request pins the prior state via `If-Match` (ETag),
+`Expected-Generation`, or both — the `Precondition` type. The server evaluates
+`Precondition::check` against current state:
 
 - **match** → the mutation proceeds; the response carries the new `ETag` and `generation`.
 - **mismatch** → `412 Precondition Failed` with a `ConcurrencyConflict` body
   (`expected_etag`, `actual_etag`, `expected_generation`, `actual_generation`).
+- **empty** (pins nothing) → `428 Precondition Required`. `check` never silently
+  passes a blind write; this is `PreconditionError::Required`.
 
-An empty precondition is an **unconditional create** — it must fail with `412`
-(or `409`) if the resource already exists, never silently overwrite.
+Create-if-absent is the **only** mode that legitimately carries no precondition,
+and it does **not** go through `Precondition::check`: the create handler is gated
+by an existence check and must fail (`409`/`412`) if the resource already exists,
+never silently overwrite.
 
 ## Idempotency (#2)
 
 Every mutating request carries an `Idempotency-Key`. The server stores an
-`IdempotencyRecord { key, request_fingerprint, response_etag, response_generation, stored_at }`,
-where `request_fingerprint` is the SHA-256 of the canonical request body.
+`IdempotencyRecord { key, request_fingerprint, response, stored_at }`, where
+`request_fingerprint` is the SHA-256 of the canonical request body and
+`response` is the **full original `MutationResponse`** — ETag, generation, the
+`IdempotencyOutcome`, and the original `AuditEvent`. Persisting the whole
+response (not just etag + generation) is what lets a retry whose original HTTP
+response was lost be answered **verbatim** — including the original audit event
+— without re-applying state or fabricating a fresh audit record.
 
-On a key reuse the server returns an `IdempotencyOutcome`:
+On a key reuse the server calls `IdempotencyRecord::match_request(fingerprint)`:
 
-| Outcome | Condition | HTTP |
-|---------|-----------|------|
-| `Applied` | new key | `200`/`201` with `MutationResponse` |
-| `Replayed` | same key + same fingerprint | `200` with the **stored** `MutationResponse` (no re-apply) |
-| `Conflict` | same key + different fingerprint | `409 Conflict` |
+| `IdempotencyReplay` | Condition | HTTP |
+|---------------------|-----------|------|
+| `Replay(&MutationResponse)` | same key + same fingerprint | `200` with the **stored** `MutationResponse`, returned verbatim, no re-apply |
+| `Conflict { reason }` | same key + different fingerprint | `409 Conflict` (`RemoteStoreError::IdempotencyConflict`) |
+
+A new key is `Applied`. The success `IdempotencyOutcome` recorded on a
+`MutationResponse` is therefore `Applied` (first apply) or `Replayed`; conflicts
+are **not** a success outcome — they surface as `RemoteStoreError::IdempotencyConflict`.
 
 This mirrors the local `traffic::set` replay semantics already in tree: a retry
-of the exact same request is safe; reusing a key for a different body is an
-error.
+of the exact same request is safe and returns the original body; reusing a key
+for a different body is an error.
 
 ## Authorization / RBAC (#3)
 
@@ -135,10 +153,14 @@ MutationResponse {
 | List backups | — | `[BackupManifest]` |
 | Restore | `RestoreRequest { backup_id, precondition }` | `RestoreOutcome { restored_generation, etag, integrity }` |
 
-`RestoreRequest.precondition` guards against clobbering a newer generation than
-the operator expects (same `412` semantics as a normal mutation). The restore
-response's `integrity` lets the caller confirm the restored state hashes to the
-backup's recorded digest.
+`RestoreRequest.precondition` is **mandatory and must pin prior state** — a
+restore is never a create, so a blind restore could clobber a newer generation.
+The field has no serde default (a request omitting it fails to deserialize), and
+`RestoreRequest::validate` additionally rejects a present-but-empty precondition
+(`RemoteContractError::UnconditionalRestore`). It then carries the same
+`412`/`428` semantics as a normal guarded mutation. The restore response's
+`integrity` lets the caller confirm the restored state hashes to the backup's
+recorded digest.
 
 ## Corruption detection (#6)
 
@@ -160,6 +182,7 @@ implementations and independent of any JSON library's map-ordering behavior.
 | `RemoteStoreError` | HTTP | When |
 |--------------------|------|------|
 | `PreconditionFailed(ConcurrencyConflict)` | `412` | stale `If-Match`/generation |
+| `PreconditionRequired { detail }` | `428` | guarded write pinned no prior state (blind write rejected) |
 | `IdempotencyConflict { reason }` | `409` | key reused with a different body |
 | `Unauthorized { policy, reason }` | `403` | RBAC deny |
 | `NotFound` | `404` | unknown environment/resource |
@@ -169,8 +192,9 @@ implementations and independent of any JSON library's map-ordering behavior.
 
 ## Phase A posture
 
-- Only `LocalFsStore` is implemented; it satisfies #1, #2 (on `traffic set`),
-  #3 (`local-only`), #4 (append-only `events.jsonl`), and #6 (atomic writes).
+- Only `LocalFsStore` is implemented; it satisfies #1 (flock + generation), #2
+  (on `traffic set`), #3 (`local-only`), #4 (append-only `events.jsonl`), and #6
+  (atomic writes).
 - Non-local environments **fail closed** (`403`) until the RBAC engine ships.
 - Backup/restore (#5) and the full remote transport are deferred; the types are
   defined so the local and remote paths converge on one contract.
