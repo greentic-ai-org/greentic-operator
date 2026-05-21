@@ -241,11 +241,11 @@ impl HttpIngressServer {
                         tokio::select! {
                             _ = &mut shutdown => break,
                             accept = listener.accept() => match accept {
-                                Ok((stream, _peer)) => {
+                                Ok((stream, peer)) => {
                                     let connection_state = state.clone();
                                     tokio::spawn(async move {
                                         let service = service_fn(move |req| {
-                                            handle_request(req, connection_state.clone())
+                                            handle_request(req, peer, connection_state.clone())
                                         });
                                         let http = Http1Builder::new();
                                         let stream = TokioIo::new(stream);
@@ -305,9 +305,10 @@ struct HttpIngressState {
 
 async fn handle_request(
     req: Request<Incoming>,
+    peer: SocketAddr,
     state: Arc<HttpIngressState>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    let response = match handle_request_inner(req, state).await {
+    let response = match handle_request_inner(req, peer, state).await {
         Ok(response) => with_cors(response),
         Err(response) => with_cors(response),
     };
@@ -316,6 +317,7 @@ async fn handle_request(
 
 async fn handle_request_inner(
     req: Request<Incoming>,
+    peer: SocketAddr,
     state: Arc<HttpIngressState>,
 ) -> Result<Response<Full<Bytes>>, Response<Full<Bytes>>> {
     // CORS preflight
@@ -348,6 +350,7 @@ async fn handle_request_inner(
         return crate::deployments::api::handle_deployments_request(
             req,
             &path,
+            peer,
             &state.deployments_state,
         )
         .await

@@ -2,32 +2,52 @@
 //! handlers. Thin JSON-body adapters over the `greentic_deployer` library
 //! verbs — the same verbs the local `gtc op revisions|traffic` CLI calls.
 //!
-//! Phase B is local-CLI scaffolding: handlers are open (no mTLS), and each
-//! request constructs a fresh `LocalFsStore` rooted at the per-user default
-//! (`~/.greentic/environments`) or the `GREENTIC_OPERATOR_ENV_ROOT` env-var
-//! override. Per-request stores are safe because the store is just a path
-//! holder — file-level locking lives inside `store.transact`.
+//! ## Trust boundary (Phase B local-CLI scaffolding)
 //!
-//! mTLS gating and admission folding into `admin_api::AdminState` is a
-//! Phase D/E concern (see plan §B4b).
+//! These routes mutate live deployment state but the bundled HTTP ingress
+//! has no caller authn/authz today. The deployer library's own
+//! `authorize_local_only` only checks the *env id* (`local` is allowed),
+//! which is caller-supplied JSON — it cannot distinguish a trusted local
+//! process from a browser tab or a remote attacker. To close that gap
+//! without pulling in Phase D's mTLS work, this module enforces a
+//! defense-in-depth gate at the handler:
+//!
+//! - **Peer must be loopback** when `loopback_only` is set. Set to `false`
+//!   only after mTLS / admin admission lands.
+//! - **`Origin` header (if present) must point at loopback** — blocks
+//!   browser cross-origin CSRF even when the bind address is loopback
+//!   (the shared ingress applies wildcard CORS to all responses).
+//!
+//! Folding into `admin_api::AdminState` with mTLS is Phase D/E (plan §B4b).
+//!
+//! ## Store
+//!
+//! Each request constructs a fresh `LocalFsStore` rooted at `state.env_root`
+//! → `GREENTIC_OPERATOR_ENV_ROOT` → `LocalFsStore::default_root()`. Per-
+//! request stores are safe — the store is just a path holder; file-level
+//! locking lives inside `store.transact`.
+//!
+//! ## Errors
 //!
 //! `OpError` → HTTP status mapping mirrors the CLI's exit-code envelope so
 //! a local caller switching from `gtc op` to HTTP sees the same semantics.
 
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use greentic_deploy_spec::{Environment, RevisionLifecycle};
 use greentic_deployer::cli::{
     OpError, OpFlags, OpOutcome,
     revisions::{self, RevisionStagePayload, RevisionTransitionPayload},
     traffic::{self, TrafficSetPayload, TrafficShowPayload},
 };
-use greentic_deployer::environment::LocalFsStore;
+use greentic_deployer::environment::{EnvironmentStore, LocalFsStore};
 use http_body_util::{BodyExt, Full};
 use hyper::{
-    Method, Request, Response, StatusCode,
+    HeaderMap, Method, Request, Response, StatusCode,
     body::{Bytes, Incoming},
-    header::CONTENT_TYPE,
+    header::{CONTENT_TYPE, HeaderValue, ORIGIN},
 };
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -45,15 +65,24 @@ fn into_error(response: DeploymentResponse) -> DeploymentError {
     Box::new(response)
 }
 
-/// Shared state. `env_root = None` falls back to the per-user default at
-/// request time; tests inject a tempdir here.
+/// Shared state.
+///
+/// - `env_root = None` falls back to the per-user default at request time;
+///   tests inject a tempdir.
+/// - `loopback_only = true` (the default) enforces a peer-IP loopback check
+///   on every request. Flip to `false` only after mTLS / admin admission
+///   lands (Phase D).
 pub struct DeploymentsState {
     pub env_root: Option<PathBuf>,
+    pub loopback_only: bool,
 }
 
 impl DeploymentsState {
     pub fn new() -> Self {
-        Self { env_root: None }
+        Self {
+            env_root: None,
+            loopback_only: true,
+        }
     }
 
     fn build_store(&self) -> Result<LocalFsStore, DeploymentError> {
@@ -89,12 +118,17 @@ impl Default for DeploymentsState {
 ///   POST /deployments/warm            → `revisions::warm`
 ///   POST /deployments/activate        → `traffic::set`
 ///   POST /deployments/rollback        → `traffic::rollback`
-///   POST /deployments/complete-drain  → `revisions::drain`
+///   POST /deployments/complete-drain  → `revisions::archive` (Draining → Inactive)
 pub async fn handle_deployments_request(
     req: Request<Incoming>,
     path: &str,
+    peer_addr: SocketAddr,
     state: &Arc<DeploymentsState>,
 ) -> DeploymentResult {
+    // §B4b trust-boundary gate. Runs before body collection so a hostile
+    // caller cannot stream a large body just to be refused.
+    check_trust_boundary(peer_addr, req.headers(), state)?;
+
     let method = req.method().clone();
     let body_bytes = req
         .into_body()
@@ -108,6 +142,63 @@ pub async fn handle_deployments_request(
             ))
         })?;
     dispatch(method, path, &body_bytes, state).await
+}
+
+/// Enforce the Phase B trust boundary documented in the module header.
+/// `Origin` header (if present) must be loopback even on a loopback bind,
+/// because the shared ingress applies wildcard CORS so a browser tab on the
+/// same machine could otherwise CSRF these routes.
+fn check_trust_boundary(
+    peer_addr: SocketAddr,
+    headers: &HeaderMap<HeaderValue>,
+    state: &Arc<DeploymentsState>,
+) -> Result<(), DeploymentError> {
+    if state.loopback_only && !peer_addr.ip().is_loopback() {
+        return Err(into_error(error_response(
+            StatusCode::FORBIDDEN,
+            format!(
+                "/deployments/* refused: peer {peer_addr} is not loopback; \
+                 mTLS / admin admission is Phase D (plan §B4b)"
+            ),
+        )));
+    }
+    if let Some(origin) = headers.get(ORIGIN).and_then(|v| v.to_str().ok())
+        && !is_loopback_origin(origin)
+    {
+        return Err(into_error(error_response(
+            StatusCode::FORBIDDEN,
+            format!(
+                "/deployments/* refused: Origin `{origin}` is not loopback; \
+                 cross-origin browser callers are blocked until mTLS lands"
+            ),
+        )));
+    }
+    Ok(())
+}
+
+/// True for `http(s)://localhost[:port]`, `http(s)://127.0.0.1[:port]`,
+/// `http(s)://[::1][:port]`, and the literal `null` (sandboxed contexts).
+fn is_loopback_origin(origin: &str) -> bool {
+    if origin.eq_ignore_ascii_case("null") {
+        return true;
+    }
+    let after_scheme = origin
+        .strip_prefix("http://")
+        .or_else(|| origin.strip_prefix("https://"))
+        .unwrap_or(origin);
+    // Strip an optional `/`-prefixed path tail (browsers don't include one
+    // in the Origin header, but be permissive).
+    let host = after_scheme.split('/').next().unwrap_or("");
+    let host_no_port = if let Some(stripped) = host.strip_prefix('[') {
+        // IPv6 literal: `[::1]:port`.
+        stripped.split(']').next().unwrap_or("")
+    } else {
+        host.split(':').next().unwrap_or("")
+    };
+    matches!(
+        host_no_port,
+        "localhost" | "127.0.0.1" | "::1" | "0:0:0:0:0:0:0:1"
+    )
 }
 
 /// Inner dispatcher — split out of [`handle_deployments_request`] so unit
@@ -156,11 +247,15 @@ async fn dispatch(
             .await
         }
         (Method::POST, "/complete-drain") => {
+            // The reserved route name is "complete-drain" — i.e. drive
+            // `Draining → Inactive`. `revisions::drain` is the *initiation*
+            // step (`Ready → Draining`) and is intentionally not exposed
+            // here; the completion hop lives inside `revisions::archive`'s
+            // state-machine table. Guard the precondition first so we
+            // don't silently archive a Ready revision via archive's
+            // `Ready → Archived` fallback transition.
             let payload = parse_json::<RevisionTransitionPayload>(body_bytes)?;
-            run_blocking(state, move |store, flags| {
-                revisions::drain(store, flags, Some(payload))
-            })
-            .await
+            complete_drain(state, payload).await
         }
         (_, "/stage" | "/warm" | "/activate" | "/rollback" | "/complete-drain") => {
             Err(into_error(error_response(
@@ -173,6 +268,72 @@ async fn dispatch(
             format!("unknown /deployments endpoint: {sub_path}"),
         ))),
     }
+}
+
+/// `POST /deployments/complete-drain`. Drives a single revision from
+/// `Draining → Inactive` via the deployer library's `archive` state-machine.
+///
+/// The precondition (lifecycle == Draining) is checked twice: a pre-flight
+/// load outside the env flock (fast, friendly error) and then implicitly by
+/// the transaction itself (any Ready/Warming/Staged revision would walk to
+/// Archived under `archive`, not to Inactive — which we refuse). The
+/// pre-flight check is best-effort: a racing concurrent transition would
+/// flip the lifecycle between the load and the `archive` call, but the
+/// worst case is a confusing-but-correct outcome from `archive`'s
+/// transition matrix; no state is corrupted.
+async fn complete_drain(
+    state: &Arc<DeploymentsState>,
+    payload: RevisionTransitionPayload,
+) -> DeploymentResult {
+    let store = state.build_store()?;
+    let env_id = match greentic_deploy_spec::EnvId::try_from(payload.environment_id.as_str()) {
+        Ok(id) => id,
+        Err(e) => {
+            return Err(into_error(op_error_response(&OpError::InvalidArgument(
+                format!("environment_id: {e}"),
+            ))));
+        }
+    };
+    let revision_id_str = payload.revision_id.clone();
+
+    let env_for_check = store.clone();
+    let preflight = tokio::task::spawn_blocking(move || env_for_check.load(&env_id))
+        .await
+        .map_err(|err| {
+            into_error(error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("worker join: {err}"),
+            ))
+        })?;
+    let env = preflight.map_err(|e| into_error(op_error_response(&OpError::from(e))))?;
+    precheck_drain_completable(&env, &revision_id_str)
+        .map_err(|err| into_error(op_error_response(&err)))?;
+
+    run_blocking(state, move |store, flags| {
+        revisions::archive(store, flags, Some(payload))
+    })
+    .await
+}
+
+/// Pre-flight contract guard for `/complete-drain`. Pulled out as a pure
+/// function so tests can exercise the precondition without standing up a
+/// real env on disk. Compares revision ids by string so we don't need a
+/// direct `ulid` dependency in the operator just for the precheck.
+fn precheck_drain_completable(env: &Environment, revision_id: &str) -> Result<(), OpError> {
+    let rev = env
+        .revisions
+        .iter()
+        .find(|r| r.revision_id.to_string() == revision_id)
+        .ok_or_else(|| OpError::NotFound(format!("revision `{revision_id}` not found in env")))?;
+    if rev.lifecycle != RevisionLifecycle::Draining {
+        return Err(OpError::Conflict(format!(
+            "/complete-drain requires revision in `Draining`; \
+             revision `{revision_id}` is `{:?}`. Initiate drain \
+             (`Ready → Draining`) before completing it.",
+            rev.lifecycle,
+        )));
+    }
+    Ok(())
 }
 
 async fn run_blocking<F>(state: &Arc<DeploymentsState>, op: F) -> DeploymentResult
@@ -263,12 +424,26 @@ fn error_response(status: StatusCode, message: impl Into<String>) -> DeploymentR
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
+    use greentic_deploy_spec::{
+        BundleId, DeploymentId, EnvId, Revision, RevisionId, RevisionLifecycle, SchemaVersion,
+    };
     use http_body_util::BodyExt;
+    use std::net::{IpAddr, Ipv4Addr};
 
     fn state_with_tempdir(tmp: &tempfile::TempDir) -> Arc<DeploymentsState> {
         Arc::new(DeploymentsState {
             env_root: Some(tmp.path().to_path_buf()),
+            loopback_only: true,
         })
+    }
+
+    fn loopback_peer() -> SocketAddr {
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 1234)
+    }
+
+    fn remote_peer() -> SocketAddr {
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 7)), 1234)
     }
 
     async fn read_body_json(resp: DeploymentResponse) -> Value {
@@ -408,5 +583,207 @@ mod tests {
                 "{err} should map to {expected}"
             );
         }
+    }
+
+    // ── §B4b trust-boundary gate (Codex finding F1) ────────────────────
+
+    #[test]
+    fn check_trust_boundary_blocks_non_loopback_peer() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = state_with_tempdir(&tmp);
+        let headers = HeaderMap::new();
+        let err = check_trust_boundary(remote_peer(), &headers, &state)
+            .expect_err("remote peer must be refused");
+        assert_eq!(err.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn check_trust_boundary_allows_loopback_peer_without_origin() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = state_with_tempdir(&tmp);
+        let headers = HeaderMap::new();
+        check_trust_boundary(loopback_peer(), &headers, &state).expect("loopback must pass");
+    }
+
+    #[test]
+    fn check_trust_boundary_allows_loopback_origin() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = state_with_tempdir(&tmp);
+        let mut headers = HeaderMap::new();
+        headers.insert(ORIGIN, HeaderValue::from_static("http://127.0.0.1:8080"));
+        check_trust_boundary(loopback_peer(), &headers, &state).expect("loopback Origin must pass");
+        headers.insert(ORIGIN, HeaderValue::from_static("http://localhost:8080"));
+        check_trust_boundary(loopback_peer(), &headers, &state)
+            .expect("localhost Origin must pass");
+        headers.insert(ORIGIN, HeaderValue::from_static("http://[::1]:8080"));
+        check_trust_boundary(loopback_peer(), &headers, &state).expect("[::1] Origin must pass");
+        headers.insert(ORIGIN, HeaderValue::from_static("null"));
+        check_trust_boundary(loopback_peer(), &headers, &state).expect("`null` Origin must pass");
+    }
+
+    #[test]
+    fn check_trust_boundary_blocks_cross_origin_csrf() {
+        // Browser tab on the same machine: peer is loopback, but Origin
+        // points at an attacker-controlled site. Wildcard CORS on the
+        // shared ingress would let the response through, so the handler
+        // must refuse before the deployer mutation runs.
+        let tmp = tempfile::tempdir().unwrap();
+        let state = state_with_tempdir(&tmp);
+        let mut headers = HeaderMap::new();
+        headers.insert(ORIGIN, HeaderValue::from_static("https://evil.example.com"));
+        let err = check_trust_boundary(loopback_peer(), &headers, &state)
+            .expect_err("remote Origin must be refused");
+        assert_eq!(err.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn loopback_only_false_disables_peer_check_but_keeps_origin_check() {
+        // Phase D path: caller has wired in their own admission upstream.
+        // We still defend in depth against browser CSRF via Origin.
+        let tmp = tempfile::tempdir().unwrap();
+        let state = Arc::new(DeploymentsState {
+            env_root: Some(tmp.path().to_path_buf()),
+            loopback_only: false,
+        });
+        let headers = HeaderMap::new();
+        check_trust_boundary(remote_peer(), &headers, &state)
+            .expect("remote peer must pass when loopback_only=false");
+        let mut hostile = HeaderMap::new();
+        hostile.insert(ORIGIN, HeaderValue::from_static("https://evil.example.com"));
+        let err = check_trust_boundary(remote_peer(), &hostile, &state)
+            .expect_err("remote Origin must still be refused");
+        assert_eq!(err.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn is_loopback_origin_classifier() {
+        for ok in [
+            "http://localhost",
+            "http://localhost:3000",
+            "https://localhost",
+            "http://127.0.0.1",
+            "http://127.0.0.1:8080",
+            "http://[::1]",
+            "http://[::1]:8080",
+            "null",
+            "NULL",
+        ] {
+            assert!(is_loopback_origin(ok), "{ok} should classify as loopback");
+        }
+        for not_ok in [
+            "http://example.com",
+            "https://attacker.example",
+            "http://127.0.0.1.evil.example",
+            "http://localhostess.example",
+            "http://10.0.0.1",
+            "http://[2001:db8::1]",
+        ] {
+            assert!(
+                !is_loopback_origin(not_ok),
+                "{not_ok} must NOT classify as loopback"
+            );
+        }
+    }
+
+    // ── /complete-drain precondition (Codex finding F2) ────────────────
+
+    fn demo_env_id() -> EnvId {
+        EnvId::try_from("demo-env").unwrap()
+    }
+
+    fn revision_with_lifecycle(id: &RevisionId, lifecycle: RevisionLifecycle) -> Revision {
+        Revision {
+            schema: SchemaVersion::new(SchemaVersion::REVISION_V1),
+            revision_id: id.clone(),
+            env_id: demo_env_id(),
+            bundle_id: BundleId::new("demo-bundle"),
+            deployment_id: DeploymentId(ulid::Ulid::new()),
+            sequence: 1,
+            created_at: Utc::now(),
+            bundle_digest: "sha256:00".into(),
+            pack_list: Vec::new(),
+            pack_list_lock_ref: PathBuf::from("pack-list.lock"),
+            config_digest: "sha256:00".into(),
+            signature_sidecar_ref: PathBuf::from("rev.sig"),
+            lifecycle,
+            staged_at: None,
+            warmed_at: None,
+            drain_seconds: 30,
+            abort_metrics: Vec::new(),
+        }
+    }
+
+    fn env_with_one_revision(rev: Revision) -> Environment {
+        Environment {
+            schema: SchemaVersion::new(SchemaVersion::ENVIRONMENT_V1),
+            environment_id: demo_env_id(),
+            name: "demo".into(),
+            host_config: greentic_deploy_spec::EnvironmentHostConfig {
+                env_id: demo_env_id(),
+                region: None,
+                tenant_org_id: None,
+            },
+            packs: Vec::new(),
+            credentials_ref: None,
+            bundles: Vec::new(),
+            revisions: vec![rev],
+            traffic_splits: Vec::new(),
+            revocation: Default::default(),
+            retention: Default::default(),
+            health: Default::default(),
+        }
+    }
+
+    #[test]
+    fn precheck_drain_completable_accepts_draining_revision() {
+        let rev_id = RevisionId(ulid::Ulid::new());
+        let env = env_with_one_revision(revision_with_lifecycle(
+            &rev_id,
+            RevisionLifecycle::Draining,
+        ));
+        precheck_drain_completable(&env, &rev_id.to_string())
+            .expect("Draining revision must be accepted");
+    }
+
+    #[test]
+    fn precheck_drain_completable_rejects_ready_revision_with_conflict() {
+        // The bug Codex flagged: archive's transition matrix would walk a
+        // Ready revision straight to Archived. The precheck must refuse it.
+        let rev_id = RevisionId(ulid::Ulid::new());
+        let env = env_with_one_revision(revision_with_lifecycle(&rev_id, RevisionLifecycle::Ready));
+        let err = precheck_drain_completable(&env, &rev_id.to_string())
+            .expect_err("Ready revision must be refused");
+        assert!(matches!(err, OpError::Conflict(_)), "got {err:?}");
+        assert_eq!(op_error_response(&err).status(), StatusCode::CONFLICT);
+    }
+
+    #[test]
+    fn precheck_drain_completable_rejects_other_lifecycle_states() {
+        for lifecycle in [
+            RevisionLifecycle::Inactive,
+            RevisionLifecycle::Staged,
+            RevisionLifecycle::Warming,
+            RevisionLifecycle::Failed,
+            RevisionLifecycle::Archived,
+        ] {
+            let rev_id = RevisionId(ulid::Ulid::new());
+            let env = env_with_one_revision(revision_with_lifecycle(&rev_id, lifecycle));
+            let err = precheck_drain_completable(&env, &rev_id.to_string())
+                .expect_err("non-Draining must be refused");
+            assert!(matches!(err, OpError::Conflict(_)), "got {err:?}");
+        }
+    }
+
+    #[test]
+    fn precheck_drain_completable_missing_revision_is_404() {
+        let env = env_with_one_revision(revision_with_lifecycle(
+            &RevisionId(ulid::Ulid::new()),
+            RevisionLifecycle::Draining,
+        ));
+        let unknown = RevisionId(ulid::Ulid::new()).to_string();
+        let err = precheck_drain_completable(&env, &unknown)
+            .expect_err("unknown revision must be NotFound");
+        assert!(matches!(err, OpError::NotFound(_)), "got {err:?}");
+        assert_eq!(op_error_response(&err).status(), StatusCode::NOT_FOUND);
     }
 }

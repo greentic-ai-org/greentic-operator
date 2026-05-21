@@ -41,6 +41,7 @@ async-trait = "0.1"
 base64 = "0.22"
 chrono = "0.4"
 directories-next = "2"
+greentic-deploy-spec = ">=0.1, <0.2"
 greentic-deployer = ">=1.1.0-dev, <1.2.0-0"
 greentic-setup = ">=1.1.0-dev, <1.2.0-0"
 greentic-qa-lib = ">=1.1.0-dev, <1.2.0-0"
@@ -163,6 +164,7 @@ features = [
 [dev-dependencies]
 indexmap = "2"
 tempfile = "3.10"
+ulid = "1"
 
 [workspace]
 members = [
