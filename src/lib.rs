@@ -12,6 +12,7 @@ pub mod component_qa_ops;
 pub mod config;
 pub mod config_gate;
 pub mod demo;
+pub mod deployments;
 pub mod doctor;
 pub mod domains;
 pub mod gmap;
