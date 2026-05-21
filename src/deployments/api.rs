@@ -34,6 +34,7 @@
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use greentic_deploy_spec::{Environment, RevisionLifecycle};
@@ -43,27 +44,30 @@ use greentic_deployer::cli::{
     traffic::{self, TrafficSetPayload, TrafficShowPayload},
 };
 use greentic_deployer::environment::{EnvironmentStore, LocalFsStore};
-use http_body_util::{BodyExt, Full};
+use http_body_util::{BodyExt, Limited};
 use hyper::{
-    HeaderMap, Method, Request, Response, StatusCode,
-    body::{Bytes, Incoming},
-    header::{CONTENT_TYPE, HeaderValue, ORIGIN},
+    HeaderMap, Method, Request, StatusCode,
+    body::Incoming,
+    header::{HeaderValue, ORIGIN},
 };
 use serde::de::DeserializeOwned;
-use serde_json::{Value, json};
+use serde_json::json;
+
+use crate::http_util::{
+    HttpError as DeploymentError, HttpResponse as DeploymentResponse,
+    HttpResult as DeploymentResult, error_response, into_error, json_response,
+};
 
 /// Environment-variable override for the env-store root. When unset, we fall
 /// back to [`LocalFsStore::default_root`] (`~/.greentic/environments`) — the
 /// same default `gtc op` uses.
 const ENV_ROOT_VAR: &str = "GREENTIC_OPERATOR_ENV_ROOT";
 
-pub type DeploymentResponse = Response<Full<Bytes>>;
-pub type DeploymentError = Box<DeploymentResponse>;
-pub type DeploymentResult<T = DeploymentResponse> = Result<T, DeploymentError>;
-
-fn into_error(response: DeploymentResponse) -> DeploymentError {
-    Box::new(response)
-}
+/// Per-request body cap. Generous for stage payloads (manifest + pack list +
+/// sidecar refs) but bounds the loopback-DoS surface: the trust-boundary gate
+/// refuses remote peers, but a local hostile process could otherwise stream
+/// gigabytes into `body.collect()` and OOM the operator.
+const MAX_BODY_BYTES: usize = 512 * 1024;
 
 /// Shared state.
 ///
@@ -130,16 +134,25 @@ pub async fn handle_deployments_request(
     check_trust_boundary(peer_addr, req.headers(), state)?;
 
     let method = req.method().clone();
-    let body_bytes = req
-        .into_body()
+    // Cap the body even though the trust boundary already blocks remote
+    // peers — a local hostile process could otherwise OOM the operator.
+    let body_bytes = Limited::new(req.into_body(), MAX_BODY_BYTES)
         .collect()
         .await
         .map(|c| c.to_bytes())
         .map_err(|err| {
-            into_error(error_response(
-                StatusCode::BAD_REQUEST,
-                format!("read body: {err}"),
-            ))
+            let too_large = err
+                .downcast_ref::<http_body_util::LengthLimitError>()
+                .is_some();
+            let (status, msg) = if too_large {
+                (
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    format!("body exceeds {MAX_BODY_BYTES} bytes"),
+                )
+            } else {
+                (StatusCode::BAD_REQUEST, format!("read body: {err}"))
+            };
+            into_error(error_response(status, msg))
         })?;
     dispatch(method, path, &body_bytes, state).await
 }
@@ -317,13 +330,19 @@ async fn complete_drain(
 
 /// Pre-flight contract guard for `/complete-drain`. Pulled out as a pure
 /// function so tests can exercise the precondition without standing up a
-/// real env on disk. Compares revision ids by string so we don't need a
-/// direct `ulid` dependency in the operator just for the precheck.
+/// real env on disk.
+///
+/// ULIDs are Crockford Base32 and `from_str` accepts both cases — parse the
+/// input once and compare typed values, so a lowercase ULID from the caller
+/// matches the canonical uppercase `Display` form (and we don't allocate a
+/// String per iteration).
 fn precheck_drain_completable(env: &Environment, revision_id: &str) -> Result<(), OpError> {
+    let target = ulid::Ulid::from_str(revision_id)
+        .map_err(|e| OpError::InvalidArgument(format!("revision_id: {e}")))?;
     let rev = env
         .revisions
         .iter()
-        .find(|r| r.revision_id.to_string() == revision_id)
+        .find(|r| r.revision_id.0 == target)
         .ok_or_else(|| OpError::NotFound(format!("revision `{revision_id}` not found in env")))?;
     if rev.lifecycle != RevisionLifecycle::Draining {
         return Err(OpError::Conflict(format!(
@@ -395,32 +414,6 @@ fn op_error_response(err: &OpError) -> DeploymentResponse {
     )
 }
 
-fn json_response(status: StatusCode, value: Value) -> DeploymentResponse {
-    let body = serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_string());
-    Response::builder()
-        .status(status)
-        .header(CONTENT_TYPE, "application/json")
-        .body(Full::from(Bytes::from(body)))
-        .unwrap_or_else(|err| {
-            Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(Full::from(Bytes::from(format!(
-                    "failed to build response: {err}"
-                ))))
-                .unwrap()
-        })
-}
-
-fn error_response(status: StatusCode, message: impl Into<String>) -> DeploymentResponse {
-    json_response(
-        status,
-        json!({
-            "success": false,
-            "message": message.into(),
-        }),
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -446,12 +439,21 @@ mod tests {
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 7)), 1234)
     }
 
-    async fn read_body_json(resp: DeploymentResponse) -> Value {
+    async fn read_body_json(resp: DeploymentResponse) -> serde_json::Value {
         let bytes = resp.into_body().collect().await.unwrap().to_bytes();
         if bytes.is_empty() {
             return json!({});
         }
         serde_json::from_slice(&bytes).expect("valid JSON body")
+    }
+
+    #[test]
+    fn max_body_bytes_constant_is_reasonable() {
+        // Tracks intent: stage payloads carry a manifest + pack list +
+        // sidecar refs; 512 KiB is generous (~thousand entries) but bounds
+        // the loopback-DoS surface. If a real payload exceeds this, lift
+        // the constant — don't disable the cap.
+        assert_eq!(MAX_BODY_BYTES, 512 * 1024);
     }
 
     #[tokio::test]
@@ -536,22 +538,28 @@ mod tests {
 
     #[test]
     fn op_error_to_status_covers_every_variant() {
-        // Exhaustive over OpError variants so any future addition forces a
-        // conscious status-code choice. Variants we can't trivially fabricate
-        // (Store/Spec/Audit) get verified via their HTTP status code only.
-        let cases: &[(OpError, StatusCode)] = &[
-            (OpError::NotFound("x".into()), StatusCode::NOT_FOUND),
-            (OpError::Conflict("x".into()), StatusCode::CONFLICT),
+        // Lists every `OpError` variant. The real compile-time safety net
+        // is the wildcard-free match in `op_error_response` — any new
+        // variant in a future deployer release breaks that match. This
+        // test is the runtime double-check that each variant maps to the
+        // documented status.
+        let cases: Vec<(OpError, StatusCode)> = vec![
             (
-                OpError::Unauthorized {
-                    policy: "p".into(),
-                    reason: "r".into(),
-                },
-                StatusCode::FORBIDDEN,
+                OpError::Store(greentic_deployer::environment::StoreError::NotFound(
+                    demo_env_id(),
+                )),
+                StatusCode::INTERNAL_SERVER_ERROR,
             ),
             (
-                OpError::InvalidArgument("x".into()),
+                OpError::Spec(greentic_deploy_spec::SpecError::BasisPointsSum { sum: 0 }),
                 StatusCode::BAD_REQUEST,
+            ),
+            (
+                OpError::Io {
+                    path: PathBuf::from("/dev/null"),
+                    source: std::io::Error::other("boom"),
+                },
+                StatusCode::INTERNAL_SERVER_ERROR,
             ),
             (
                 OpError::AnswersParse {
@@ -565,18 +573,25 @@ mod tests {
                 StatusCode::INTERNAL_SERVER_ERROR,
             ),
             (
+                OpError::InvalidArgument("x".into()),
+                StatusCode::BAD_REQUEST,
+            ),
+            (OpError::NotFound("x".into()), StatusCode::NOT_FOUND),
+            (OpError::NotYetImplemented("x"), StatusCode::NOT_IMPLEMENTED),
+            (OpError::Conflict("x".into()), StatusCode::CONFLICT),
+            (
+                OpError::Unauthorized {
+                    policy: "p".into(),
+                    reason: "r".into(),
+                },
+                StatusCode::FORBIDDEN,
+            ),
+            (
                 OpError::Audit("x".into()),
                 StatusCode::INTERNAL_SERVER_ERROR,
             ),
-            (
-                OpError::Io {
-                    path: PathBuf::from("/dev/null"),
-                    source: std::io::Error::other("boom"),
-                },
-                StatusCode::INTERNAL_SERVER_ERROR,
-            ),
         ];
-        for (err, expected) in cases {
+        for (err, expected) in &cases {
             assert_eq!(
                 op_error_response(err).status(),
                 *expected,
@@ -772,6 +787,33 @@ mod tests {
                 .expect_err("non-Draining must be refused");
             assert!(matches!(err, OpError::Conflict(_)), "got {err:?}");
         }
+    }
+
+    #[test]
+    fn precheck_drain_completable_accepts_lowercase_ulid_input() {
+        // Regression: `RevisionId::Display` is uppercase Crockford Base32,
+        // but `Ulid::from_str` accepts both cases. The stringly compare in
+        // the original PR rejected lowercase input as 404.
+        let rev_id = RevisionId(ulid::Ulid::new());
+        let env = env_with_one_revision(revision_with_lifecycle(
+            &rev_id,
+            RevisionLifecycle::Draining,
+        ));
+        let lower = rev_id.to_string().to_ascii_lowercase();
+        precheck_drain_completable(&env, &lower)
+            .expect("lowercase ULID must match the same revision");
+    }
+
+    #[test]
+    fn precheck_drain_completable_invalid_ulid_is_400() {
+        let env = env_with_one_revision(revision_with_lifecycle(
+            &RevisionId(ulid::Ulid::new()),
+            RevisionLifecycle::Draining,
+        ));
+        let err = precheck_drain_completable(&env, "not-a-ulid")
+            .expect_err("non-ULID input must be InvalidArgument");
+        assert!(matches!(err, OpError::InvalidArgument(_)), "got {err:?}");
+        assert_eq!(op_error_response(&err).status(), StatusCode::BAD_REQUEST);
     }
 
     #[test]

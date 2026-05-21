@@ -17,6 +17,7 @@ pub mod doctor;
 pub mod domains;
 pub mod gmap;
 pub mod hooks;
+pub mod http_util;
 pub mod ingress;
 pub mod messaging_universal;
 pub mod ngrok;
