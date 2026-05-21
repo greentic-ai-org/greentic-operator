@@ -29,6 +29,7 @@ use crate::demo::event_router::route_events_to_default_flow;
 use crate::demo::ingress_dispatch::dispatch_http_ingress;
 use crate::demo::ingress_types::{IngressHttpResponse, IngressRequestV1};
 use crate::demo::runner_host::{DemoRunnerHost, OperatorContext};
+use crate::deployments::api::DeploymentsState;
 use crate::domains::{self, Domain};
 use crate::messaging_universal::{app, dto::ProviderPayloadV1, egress};
 use crate::operator_log;
@@ -204,6 +205,7 @@ impl HttpIngressServer {
             domains,
             active_route_table,
             tg_form_store: TelegramFormStore::default(),
+            deployments_state: Arc::new(DeploymentsState::new()),
         });
         let (tx, rx) = oneshot::channel();
         let addr = config.bind_addr;
@@ -239,11 +241,11 @@ impl HttpIngressServer {
                         tokio::select! {
                             _ = &mut shutdown => break,
                             accept = listener.accept() => match accept {
-                                Ok((stream, _peer)) => {
+                                Ok((stream, peer)) => {
                                     let connection_state = state.clone();
                                     tokio::spawn(async move {
                                         let service = service_fn(move |req| {
-                                            handle_request(req, connection_state.clone())
+                                            handle_request(req, peer, connection_state.clone())
                                         });
                                         let http = Http1Builder::new();
                                         let stream = TokioIo::new(stream);
@@ -298,13 +300,15 @@ struct HttpIngressState {
     domains: Vec<Domain>,
     active_route_table: ActiveRouteTable,
     tg_form_store: TelegramFormStore,
+    deployments_state: Arc<DeploymentsState>,
 }
 
 async fn handle_request(
     req: Request<Incoming>,
+    peer: SocketAddr,
     state: Arc<HttpIngressState>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    let response = match handle_request_inner(req, state).await {
+    let response = match handle_request_inner(req, peer, state).await {
         Ok(response) => with_cors(response),
         Err(response) => with_cors(response),
     };
@@ -313,6 +317,7 @@ async fn handle_request(
 
 async fn handle_request_inner(
     req: Request<Incoming>,
+    peer: SocketAddr,
     state: Arc<HttpIngressState>,
 ) -> Result<Response<Full<Bytes>>, Response<Full<Bytes>>> {
     // CORS preflight
@@ -338,6 +343,18 @@ async fn handle_request_inner(
         return crate::onboard::api::handle_onboard_request(req, &path, &state.runner_host)
             .await
             .map_err(|err| *err);
+    }
+
+    // Deployment lifecycle routes: /deployments/{stage,warm,activate,rollback,complete-drain}
+    if path.starts_with("/deployments") {
+        return crate::deployments::api::handle_deployments_request(
+            req,
+            &path,
+            peer,
+            &state.deployments_state,
+        )
+        .await
+        .map_err(|err| *err);
     }
 
     if let Some(route_match) = state.active_route_table.match_request(&path) {
