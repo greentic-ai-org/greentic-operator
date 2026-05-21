@@ -709,7 +709,7 @@ mod tests {
     fn revision_with_lifecycle(id: &RevisionId, lifecycle: RevisionLifecycle) -> Revision {
         Revision {
             schema: SchemaVersion::new(SchemaVersion::REVISION_V1),
-            revision_id: id.clone(),
+            revision_id: *id,
             env_id: demo_env_id(),
             bundle_id: BundleId::new("demo-bundle"),
             deployment_id: DeploymentId(ulid::Ulid::new()),
