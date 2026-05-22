@@ -529,6 +529,13 @@ fn parse_route_segments(path: &str) -> anyhow::Result<Vec<RouteScopeSegment>> {
     Ok(parsed)
 }
 
+// NOTE: duplicate/overlap detection keys on `public_path` alone and ignores
+// `StaticRouteDescriptor::scope`. That is correct for today's single-bundle
+// discovery (every route is legacy/unscoped). The runtime-config-backed producer
+// that stamps `Some(scope)` will legitimately emit the same `public_path` under
+// several revisions of a deployment — disambiguated at match time by
+// `match_request_for_revision` — so it must group these checks by scope before
+// reusing `validate_plan`, or co-existing scoped routes will be falsely rejected.
 fn validate_plan(plan: &mut StaticRoutePlan, reserved_routes: &ReservedRouteSet) {
     let mut seen_paths = BTreeMap::<String, String>::new();
     for route in &plan.routes {
@@ -854,6 +861,42 @@ mod tests {
                 .match_request_for_revision("/v1/web/docs/app.js", &scope_b)
                 .is_none(),
             "deployment B's scope must not match deployment A's route despite equal revision id"
+        );
+    }
+
+    #[test]
+    fn match_request_for_revision_distinguishes_bundles() {
+        // Same deployment and revision id, different bundle. The full-scope match
+        // must discriminate on bundle_id too (regression guarding the
+        // `s.bundle_id == scope.bundle_id` term against silent removal).
+        let deployment = DeploymentId::new();
+        let revision = RevisionId::new();
+        let route_scope = RevisionScope {
+            deployment_id: deployment,
+            bundle_id: BundleId::new("bundle-a"),
+            revision_id: revision,
+        };
+        let other_bundle = RevisionScope {
+            deployment_id: deployment,
+            bundle_id: BundleId::new("bundle-b"),
+            revision_id: revision,
+        };
+        let table = table_of(vec![scoped_route(
+            "/v1/web/docs",
+            Some(route_scope.clone()),
+        )]);
+
+        assert!(
+            table
+                .match_request_for_revision("/v1/web/docs/app.js", &route_scope)
+                .is_some(),
+            "the route's own bundle scope matches"
+        );
+        assert!(
+            table
+                .match_request_for_revision("/v1/web/docs/app.js", &other_bundle)
+                .is_none(),
+            "a different bundle id must not match despite equal deployment + revision"
         );
     }
 
