@@ -3,6 +3,7 @@ use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::Context;
+use greentic_deploy_spec::{BundleId, DeploymentId, RevisionId};
 use greentic_types::{ExtensionInline, decode_pack_manifest};
 use serde::Deserialize;
 use zip::ZipArchive;
@@ -10,6 +11,17 @@ use zip::ZipArchive;
 use crate::domains::{self, Domain};
 
 pub const EXT_STATIC_ROUTES_V1: &str = "greentic.static-routes.v1";
+
+/// Deployment provenance of a static route. Present only for routes discovered
+/// from a materialized runtime-config (multi-revision deployments). Routes
+/// discovered from a single bundle have no scope (`None` = legacy), matching the
+/// `Option = legacy` discipline used by the HTTP route table (B3) and `RuntimeKey`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RevisionScope {
+    pub deployment_id: DeploymentId,
+    pub bundle_id: BundleId,
+    pub revision_id: RevisionId,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RouteScopeSegment {
@@ -37,6 +49,9 @@ pub struct StaticRouteDescriptor {
     pub team_scoped: bool,
     pub cache_strategy: CacheStrategy,
     pub route_segments: Vec<RouteScopeSegment>,
+    /// Deployment/bundle/revision this route belongs to, or `None` for a legacy
+    /// single-bundle route (every route discovered today).
+    pub scope: Option<RevisionScope>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -138,7 +153,43 @@ impl ActiveRouteTable {
         &self.routes
     }
 
+    /// Match an incoming request against legacy (unscoped) routes only.
+    ///
+    /// Revision-scoped routes are skipped here so the single-bundle ingress
+    /// path never serves a deployment revision's assets; that path goes through
+    /// [`Self::match_request_for_revision`] after the dispatcher resolves a
+    /// revision. Today every discovered route is legacy, so this is the only
+    /// live matcher.
     pub fn match_request<'a>(&'a self, request_path: &str) -> Option<StaticRouteMatch<'a>> {
+        self.match_first(request_path, |descriptor| descriptor.scope.is_none())
+    }
+
+    /// Match an incoming request against routes belonging to a specific resolved
+    /// scope. Mirrors the HTTP route table's revision seam (B3).
+    ///
+    /// Matches on the **full** `(deployment_id, bundle_id, revision_id)`, not
+    /// just the revision: a shared route table can hold entries for several
+    /// deployments, and matching on revision alone could serve one deployment's
+    /// assets for another under id reuse or stale entries.
+    pub fn match_request_for_revision<'a>(
+        &'a self,
+        request_path: &str,
+        scope: &RevisionScope,
+    ) -> Option<StaticRouteMatch<'a>> {
+        self.match_first(request_path, |descriptor| {
+            descriptor.scope.as_ref().is_some_and(|s| {
+                s.deployment_id == scope.deployment_id
+                    && s.bundle_id == scope.bundle_id
+                    && s.revision_id == scope.revision_id
+            })
+        })
+    }
+
+    fn match_first<'a>(
+        &'a self,
+        request_path: &str,
+        accept: impl Fn(&StaticRouteDescriptor) -> bool,
+    ) -> Option<StaticRouteMatch<'a>> {
         let normalized = request_path
             .trim_start_matches('/')
             .split('/')
@@ -146,6 +197,9 @@ impl ActiveRouteTable {
             .collect::<Vec<_>>();
         let request_is_directory = request_path.ends_with('/');
         for descriptor in &self.routes {
+            if !accept(descriptor) {
+                continue;
+            }
             if normalized.len() < descriptor.route_segments.len() {
                 continue;
             }
@@ -380,6 +434,9 @@ fn normalize_route_descriptor(
         team_scoped: route.team,
         cache_strategy,
         route_segments,
+        // Single-bundle discovery: no deployment provenance. Runtime-config-backed
+        // discovery (the multi-revision producer) stamps `Some(..)`.
+        scope: None,
     })
 }
 
@@ -636,6 +693,7 @@ mod tests {
                     team_scoped: false,
                     cache_strategy: CacheStrategy::None,
                     route_segments: parse_route_segments("/api/onboard/docs").expect("segments"),
+                    scope: None,
                 },
                 StaticRouteDescriptor {
                     route_id: "two".into(),
@@ -649,6 +707,7 @@ mod tests {
                     team_scoped: false,
                     cache_strategy: CacheStrategy::None,
                     route_segments: parse_route_segments("/v1/web/docs/admin").expect("segments"),
+                    scope: None,
                 },
                 StaticRouteDescriptor {
                     route_id: "three".into(),
@@ -662,6 +721,7 @@ mod tests {
                     team_scoped: false,
                     cache_strategy: CacheStrategy::None,
                     route_segments: parse_route_segments("/v1/web/docs").expect("segments"),
+                    scope: None,
                 },
             ],
             warnings: Vec::new(),
@@ -686,6 +746,7 @@ mod tests {
             cache_strategy: CacheStrategy::None,
             route_segments: parse_route_segments("/v1/web/webchat/{tenant}/{team}")
                 .expect("segments"),
+            scope: None,
         };
         let table = ActiveRouteTable::from_plan(&StaticRoutePlan {
             routes: vec![route],
@@ -696,5 +757,115 @@ mod tests {
             .match_request("/v1/web/webchat/demo/default/app.js")
             .expect("route match");
         assert_eq!(matched.asset_path, "app.js");
+    }
+
+    fn scope_for(deployment_id: DeploymentId, revision_id: RevisionId) -> RevisionScope {
+        RevisionScope {
+            deployment_id,
+            bundle_id: BundleId::new("web-bundle"),
+            revision_id,
+        }
+    }
+
+    fn scoped_route(public_path: &str, scope: Option<RevisionScope>) -> StaticRouteDescriptor {
+        StaticRouteDescriptor {
+            route_id: public_path.into(),
+            pack_id: "web".into(),
+            pack_path: PathBuf::from("web.gtpack"),
+            public_path: public_path.into(),
+            source_root: "assets".into(),
+            index_file: Some("index.html".into()),
+            spa_fallback: None,
+            tenant_scoped: false,
+            team_scoped: false,
+            cache_strategy: CacheStrategy::None,
+            route_segments: parse_route_segments(public_path).expect("segments"),
+            scope,
+        }
+    }
+
+    fn table_of(routes: Vec<StaticRouteDescriptor>) -> ActiveRouteTable {
+        ActiveRouteTable::from_plan(&StaticRoutePlan {
+            routes,
+            warnings: Vec::new(),
+            blocking_failures: Vec::new(),
+        })
+    }
+
+    #[test]
+    fn match_request_skips_revision_scoped_routes() {
+        let table = table_of(vec![scoped_route(
+            "/v1/web/docs",
+            Some(scope_for(DeploymentId::new(), RevisionId::new())),
+        )]);
+
+        // Legacy matcher ignores scoped routes.
+        assert!(table.match_request("/v1/web/docs/app.js").is_none());
+    }
+
+    #[test]
+    fn match_request_for_revision_only_matches_that_revision() {
+        let deployment = DeploymentId::new();
+        let scope_a = scope_for(deployment, RevisionId::new());
+        let scope_b = scope_for(deployment, RevisionId::new());
+        let table = table_of(vec![
+            scoped_route("/v1/web/docs", Some(scope_a.clone())),
+            scoped_route("/v1/web/docs", Some(scope_b.clone())),
+        ]);
+
+        let matched = table
+            .match_request_for_revision("/v1/web/docs/app.js", &scope_a)
+            .expect("should match revision A's route");
+        assert_eq!(
+            matched.descriptor.scope.as_ref().unwrap().revision_id,
+            scope_a.revision_id
+        );
+
+        // No legacy route exists, so the unscoped matcher finds nothing.
+        assert!(table.match_request("/v1/web/docs/app.js").is_none());
+
+        // A scope for a revision with no routes matches nothing.
+        let unknown = scope_for(deployment, RevisionId::new());
+        assert!(
+            table
+                .match_request_for_revision("/v1/web/docs/app.js", &unknown)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn match_request_for_revision_distinguishes_deployments() {
+        // Same revision id stamped under two different deployments. Matching on
+        // the full scope must not serve one deployment's assets for the other
+        // (regression for revision-only matching).
+        let revision = RevisionId::new();
+        let scope_a = scope_for(DeploymentId::new(), revision);
+        let scope_b = scope_for(DeploymentId::new(), revision);
+        let table = table_of(vec![scoped_route("/v1/web/docs", Some(scope_a.clone()))]);
+
+        assert!(
+            table
+                .match_request_for_revision("/v1/web/docs/app.js", &scope_a)
+                .is_some(),
+            "deployment A's scope matches its own route"
+        );
+        assert!(
+            table
+                .match_request_for_revision("/v1/web/docs/app.js", &scope_b)
+                .is_none(),
+            "deployment B's scope must not match deployment A's route despite equal revision id"
+        );
+    }
+
+    #[test]
+    fn match_request_for_revision_skips_legacy_routes() {
+        let table = table_of(vec![scoped_route("/v1/web/docs", None)]);
+
+        let scope = scope_for(DeploymentId::new(), RevisionId::new());
+        assert!(
+            table
+                .match_request_for_revision("/v1/web/docs/app.js", &scope)
+                .is_none()
+        );
     }
 }
