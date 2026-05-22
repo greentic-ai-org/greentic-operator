@@ -1586,6 +1586,7 @@ mod tests {
                 RouteScopeSegment::Literal("web".into()),
                 RouteScopeSegment::Literal("docs".into()),
             ],
+            scope: None,
         };
         let table = ActiveRouteTable::from_plan(&crate::static_routes::StaticRoutePlan {
             routes: vec![descriptor],
