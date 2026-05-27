@@ -401,7 +401,10 @@ fn op_error_response(err: &OpError) -> DeploymentResponse {
         OpError::Store(_)
         | OpError::Io { .. }
         | OpError::SchemaGeneration(_)
-        | OpError::Audit(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        | OpError::Audit(_)
+        | OpError::RevenuePolicy(_)
+        | OpError::TrustRoot(_)
+        | OpError::OperatorKey(_) => StatusCode::INTERNAL_SERVER_ERROR,
     };
     json_response(
         status,
