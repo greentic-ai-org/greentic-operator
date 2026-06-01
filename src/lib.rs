@@ -5,6 +5,8 @@ pub mod admin_api;
 pub mod bin_resolver;
 pub mod capabilities;
 pub mod capability_bootstrap;
+pub mod capability_events;
+pub mod capability_runtime;
 pub mod cards;
 pub mod cli;
 pub mod cloudflared;

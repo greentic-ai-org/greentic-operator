@@ -15,6 +15,8 @@ use serde_json::{Map as JsonMap, Value as JsonValue, json};
 
 use crate::bin_resolver::{self, ResolveCtx};
 use crate::capabilities::ResolveScope;
+use crate::capability_events;
+use crate::capability_runtime;
 use crate::config;
 use crate::config_gate::{self, ConfigGateItem, ConfigValueSource};
 use crate::demo::{
@@ -119,9 +121,9 @@ enum DemoSubcommand {
     Allow(DemoPolicyArgs),
     #[command(about = "Forbid a tenant/team access to a pack/flow/node")]
     Forbid(DemoPolicyArgs),
-    #[command(about = "Manage demo subscriptions via provider components")]
+    #[command(about = "Manage subscriptions via provider components")]
     Subscriptions(DemoSubscriptionsCommand),
-    #[command(about = "Manage capability resolution/invocation in demo bundles")]
+    #[command(about = "Manage capability resolution and invocation in the local runtime")]
     Capability(DemoCapabilityCommand),
     #[command(about = "Run a pack/flow with inline input")]
     Run(DemoRunArgs),
@@ -849,8 +851,8 @@ struct DemoSendArgs {
 
 #[derive(Parser)]
 #[command(
-    about = "Manage demo subscriptions via provider components.",
-    long_about = "Ensure, renew, or delete provider-managed subscriptions from a demo bundle."
+    about = "Manage subscriptions via provider components.",
+    long_about = "Ensure, renew, or delete provider-managed subscriptions in the local runtime."
 )]
 struct DemoSubscriptionsCommand {
     #[command(subcommand)]
@@ -859,8 +861,8 @@ struct DemoSubscriptionsCommand {
 
 #[derive(Parser)]
 #[command(
-    about = "Manage capabilities in a demo bundle.",
-    long_about = "Resolve, invoke, and mark setup status for capability offers."
+    about = "Manage capabilities in the local runtime.",
+    long_about = "Resolve, invoke, and export capability bindings for the local runtime."
 )]
 struct DemoCapabilityCommand {
     #[command(subcommand)]
@@ -869,10 +871,30 @@ struct DemoCapabilityCommand {
 
 #[derive(Subcommand)]
 enum DemoCapabilitySubcommand {
+    List(DemoCapabilityListArgs),
+    Call(DemoCapabilityCallArgs),
     Invoke(DemoCapabilityInvokeArgs),
+    Events(DemoCapabilityEventsCommand),
+    Subscriptions(DemoCapabilitySubscriptionsCommand),
     SetupPlan(DemoCapabilitySetupPlanArgs),
     MarkReady(DemoCapabilityMarkReadyArgs),
     MarkFailed(DemoCapabilityMarkFailedArgs),
+}
+
+#[derive(Parser)]
+#[command(
+    about = "List resolved capability bindings.",
+    long_about = "Resolves all capabilities visible in the current tenant/team scope and writes the generic capability catalog artifacts."
+)]
+struct DemoCapabilityListArgs {
+    #[arg(long)]
+    bundle: PathBuf,
+    #[arg(long, default_value = "demo")]
+    tenant: String,
+    #[arg(long, default_value = "default")]
+    team: String,
+    #[arg(long)]
+    env: Option<String>,
 }
 
 #[derive(Parser)]
@@ -889,6 +911,127 @@ struct DemoCapabilityInvokeArgs {
     op: String,
     #[arg(long)]
     payload_json: Option<String>,
+    #[arg(long, default_value = "demo")]
+    tenant: String,
+    #[arg(long, default_value = "default")]
+    team: String,
+    #[arg(long)]
+    env: Option<String>,
+}
+
+#[derive(Parser)]
+#[command(
+    about = "Resolve and call a capability with optional schema validation.",
+    long_about = "Loads the resolved callable binding from the capability catalog, validates input/output schemas when declared, and invokes the selected provider op through the local runner host."
+)]
+struct DemoCapabilityCallArgs {
+    #[arg(long)]
+    bundle: PathBuf,
+    #[arg(long)]
+    cap_id: String,
+    #[arg(long)]
+    operation: String,
+    #[arg(long)]
+    input_json: Option<String>,
+    #[arg(long, default_value = "demo")]
+    tenant: String,
+    #[arg(long, default_value = "default")]
+    team: String,
+    #[arg(long)]
+    env: Option<String>,
+}
+
+#[derive(Parser)]
+#[command(
+    about = "Manage local capability event delivery.",
+    long_about = "Publishes events into the local capability event bus and inspects/replays the audit and DLQ logs."
+)]
+struct DemoCapabilityEventsCommand {
+    #[command(subcommand)]
+    command: DemoCapabilityEventsSubcommand,
+}
+
+#[derive(Subcommand)]
+enum DemoCapabilityEventsSubcommand {
+    Publish(DemoCapabilityEventsPublishArgs),
+    Tail(DemoCapabilityEventsTailArgs),
+    Dlq(DemoCapabilityEventsDlqArgs),
+    Replay(DemoCapabilityEventsReplayArgs),
+}
+
+#[derive(Parser)]
+struct DemoCapabilityEventsPublishArgs {
+    #[arg(long)]
+    bundle: PathBuf,
+    #[arg(long)]
+    topic: String,
+    #[arg(long)]
+    event_type: Option<String>,
+    #[arg(long)]
+    input_json: String,
+    #[arg(long, default_value = "demo")]
+    tenant: String,
+    #[arg(long, default_value = "default")]
+    team: String,
+    #[arg(long)]
+    env: Option<String>,
+}
+
+#[derive(Parser)]
+struct DemoCapabilityEventsTailArgs {
+    #[arg(long)]
+    bundle: PathBuf,
+    #[arg(long, default_value = "demo")]
+    tenant: String,
+    #[arg(long, default_value = "default")]
+    team: String,
+}
+
+#[derive(Parser)]
+struct DemoCapabilityEventsDlqArgs {
+    #[arg(long)]
+    bundle: PathBuf,
+    #[arg(long, default_value = "demo")]
+    tenant: String,
+    #[arg(long, default_value = "default")]
+    team: String,
+}
+
+#[derive(Parser)]
+struct DemoCapabilityEventsReplayArgs {
+    #[arg(long)]
+    bundle: PathBuf,
+    #[arg(long)]
+    event_id: Option<String>,
+    #[arg(long)]
+    delivery_id: Option<String>,
+    #[arg(long, default_value = "demo")]
+    tenant: String,
+    #[arg(long, default_value = "default")]
+    team: String,
+    #[arg(long)]
+    env: Option<String>,
+}
+
+#[derive(Parser)]
+#[command(
+    about = "List resolved event subscriptions.",
+    long_about = "Prints the resolved generic capability event subscriptions visible in the current tenant/team scope."
+)]
+struct DemoCapabilitySubscriptionsCommand {
+    #[command(subcommand)]
+    command: DemoCapabilitySubscriptionsSubcommand,
+}
+
+#[derive(Subcommand)]
+enum DemoCapabilitySubscriptionsSubcommand {
+    List(DemoCapabilitySubscriptionsListArgs),
+}
+
+#[derive(Parser)]
+struct DemoCapabilitySubscriptionsListArgs {
+    #[arg(long)]
+    bundle: PathBuf,
     #[arg(long, default_value = "demo")]
     tenant: String,
     #[arg(long, default_value = "default")]
@@ -1098,10 +1241,33 @@ impl DemoSubscriptionsCommand {
     }
 }
 
+impl DemoCapabilityEventsCommand {
+    fn run(self) -> anyhow::Result<()> {
+        match self.command {
+            DemoCapabilityEventsSubcommand::Publish(args) => args.run(),
+            DemoCapabilityEventsSubcommand::Tail(args) => args.run(),
+            DemoCapabilityEventsSubcommand::Dlq(args) => args.run(),
+            DemoCapabilityEventsSubcommand::Replay(args) => args.run(),
+        }
+    }
+}
+
+impl DemoCapabilitySubscriptionsCommand {
+    fn run(self) -> anyhow::Result<()> {
+        match self.command {
+            DemoCapabilitySubscriptionsSubcommand::List(args) => args.run(),
+        }
+    }
+}
+
 impl DemoCapabilityCommand {
     fn run(self) -> anyhow::Result<()> {
         match self.command {
+            DemoCapabilitySubcommand::List(args) => args.run(),
+            DemoCapabilitySubcommand::Call(args) => args.run(),
             DemoCapabilitySubcommand::Invoke(args) => args.run(),
+            DemoCapabilitySubcommand::Events(args) => args.run(),
+            DemoCapabilitySubcommand::Subscriptions(args) => args.run(),
             DemoCapabilitySubcommand::SetupPlan(args) => args.run(),
             DemoCapabilitySubcommand::MarkReady(args) => args.run(),
             DemoCapabilitySubcommand::MarkFailed(args) => args.run(),
@@ -1635,6 +1801,341 @@ impl DemoCapabilityInvokeArgs {
     }
 }
 
+impl DemoCapabilityCallArgs {
+    fn run(self) -> anyhow::Result<()> {
+        if let Some(env_value) = self.env.as_ref() {
+            unsafe {
+                env::set_var("GREENTIC_ENV", env_value);
+            }
+        }
+        domains::ensure_cbor_packs(&self.bundle)?;
+        let discovery = discovery::discover_with_options(
+            &self.bundle,
+            discovery::DiscoveryOptions { cbor_only: true },
+        )?;
+        let secrets_handle =
+            secrets_gate::resolve_secrets_manager(&self.bundle, &self.tenant, Some(&self.team))?;
+        let runner_host =
+            DemoRunnerHost::new(self.bundle.clone(), &discovery, None, secrets_handle, false)?;
+        let ctx = OperatorContext {
+            tenant: self.tenant.clone(),
+            team: Some(self.team.clone()),
+            correlation_id: None,
+        };
+        let scope = ResolveScope {
+            env: env::var("GREENTIC_ENV").ok(),
+            tenant: Some(self.tenant.clone()),
+            team: Some(self.team.clone()),
+        };
+        let offers = runner_host.capability_offers_in_scope(&scope);
+        let (topics, subscriptions) = runner_host.capability_event_bindings_in_scope(&scope)?;
+        let artifacts = capability_runtime::build_catalog_artifacts(
+            &offers,
+            &topics,
+            &subscriptions,
+            &ctx,
+            &scope,
+        );
+        let callable = artifacts
+            .callables
+            .iter()
+            .find(|item| {
+                item.capability_id == self.cap_id
+                    && item.operation_id.as_deref() == Some(self.operation.as_str())
+            })
+            .or_else(|| {
+                artifacts.callables.iter().find(|item| {
+                    item.capability_id == self.cap_id && item.provider_op == self.operation
+                })
+            })
+            .ok_or_else(|| {
+                anyhow!(
+                    "capability {} operation {} is not resolved in current scope",
+                    self.cap_id,
+                    self.operation
+                )
+            })?;
+        let input_value = if let Some(raw) = self.input_json.as_ref() {
+            serde_json::from_str::<JsonValue>(raw)
+                .map_err(|err| anyhow!("invalid --input-json: {err}"))?
+        } else {
+            json!({})
+        };
+        if let Some(schema_ref) = callable.input_schema_ref.as_deref() {
+            validate_pack_schema(&callable.pack_path, schema_ref, &input_value).with_context(
+                || format!("invalid input for capability {}", callable.capability_id),
+            )?;
+        }
+        let payload_bytes = serde_json::to_vec(&input_value)?;
+        let requested_op = callable
+            .operation_id
+            .as_deref()
+            .unwrap_or(self.operation.as_str());
+        let outcome = runner_host.invoke_capability(
+            &callable.capability_id,
+            requested_op,
+            &payload_bytes,
+            &ctx,
+        )?;
+        if let Some(schema_ref) = callable.output_schema_ref.as_deref() {
+            let output = outcome.output.clone().unwrap_or(JsonValue::Null);
+            validate_pack_schema(&callable.pack_path, schema_ref, &output).with_context(|| {
+                format!("invalid output for capability {}", callable.capability_id)
+            })?;
+        }
+        print_capability_outcome(&outcome)?;
+        if !outcome.success {
+            anyhow::bail!(
+                "capability call failed cap_id={} operation={}",
+                callable.capability_id,
+                self.operation
+            );
+        }
+        Ok(())
+    }
+}
+
+impl DemoCapabilityListArgs {
+    fn run(self) -> anyhow::Result<()> {
+        if let Some(env_value) = self.env.as_ref() {
+            unsafe {
+                env::set_var("GREENTIC_ENV", env_value);
+            }
+        }
+        domains::ensure_cbor_packs(&self.bundle)?;
+        let discovery = discovery::discover_with_options(
+            &self.bundle,
+            discovery::DiscoveryOptions { cbor_only: true },
+        )?;
+        let secrets_handle =
+            secrets_gate::resolve_secrets_manager(&self.bundle, &self.tenant, Some(&self.team))?;
+        let runner_host =
+            DemoRunnerHost::new(self.bundle.clone(), &discovery, None, secrets_handle, false)?;
+        let ctx = OperatorContext {
+            tenant: self.tenant.clone(),
+            team: Some(self.team.clone()),
+            correlation_id: None,
+        };
+        let scope = ResolveScope {
+            env: env::var("GREENTIC_ENV").ok(),
+            tenant: Some(self.tenant.clone()),
+            team: Some(self.team.clone()),
+        };
+        let offers = runner_host.capability_offers_in_scope(&scope);
+        let (topics, subscriptions) = runner_host.capability_event_bindings_in_scope(&scope)?;
+        let artifacts = capability_runtime::build_catalog_artifacts(
+            &offers,
+            &topics,
+            &subscriptions,
+            &ctx,
+            &scope,
+        );
+        let paths = capability_runtime::write_capability_catalog_artifacts(
+            &self.bundle,
+            &self.tenant,
+            Some(&self.team),
+            &artifacts,
+        )?;
+
+        println!(
+            "wrote {} callable capability binding(s) to {}",
+            artifacts.callables.len(),
+            paths.callables.display()
+        );
+        println!("subscriptions catalog: {}", paths.subscriptions.display());
+        println!("topics catalog: {}", paths.topics.display());
+        for item in artifacts.callables {
+            println!(
+                "{} | cap={} | pack={} | op={} | adapter={:?}",
+                item.stable_id,
+                item.capability_id,
+                item.pack_id,
+                item.provider_op,
+                item.adapter_kind
+            );
+        }
+        Ok(())
+    }
+}
+
+impl DemoCapabilitySubscriptionsListArgs {
+    fn run(self) -> anyhow::Result<()> {
+        if let Some(env_value) = self.env.as_ref() {
+            unsafe {
+                env::set_var("GREENTIC_ENV", env_value);
+            }
+        }
+        domains::ensure_cbor_packs(&self.bundle)?;
+        let discovery = discovery::discover_with_options(
+            &self.bundle,
+            discovery::DiscoveryOptions { cbor_only: true },
+        )?;
+        let secrets_handle =
+            secrets_gate::resolve_secrets_manager(&self.bundle, &self.tenant, Some(&self.team))?;
+        let runner_host =
+            DemoRunnerHost::new(self.bundle.clone(), &discovery, None, secrets_handle, false)?;
+        let ctx = OperatorContext {
+            tenant: self.tenant.clone(),
+            team: Some(self.team.clone()),
+            correlation_id: None,
+        };
+        let scope = ResolveScope {
+            env: env::var("GREENTIC_ENV").ok(),
+            tenant: Some(self.tenant.clone()),
+            team: Some(self.team.clone()),
+        };
+        let offers = runner_host.capability_offers_in_scope(&scope);
+        let (topics, subscriptions) = runner_host.capability_event_bindings_in_scope(&scope)?;
+        let artifacts = capability_runtime::build_catalog_artifacts(
+            &offers,
+            &topics,
+            &subscriptions,
+            &ctx,
+            &scope,
+        );
+        for item in artifacts.subscriptions {
+            println!(
+                "{} | topic={} | event_type={} | capability={} | op={} | attempts={}",
+                item.subscription_id,
+                item.topic,
+                item.event_type,
+                item.capability_id,
+                item.op,
+                item.max_attempts
+            );
+        }
+        Ok(())
+    }
+}
+
+impl DemoCapabilityEventsPublishArgs {
+    fn run(self) -> anyhow::Result<()> {
+        if let Some(env_value) = self.env.as_ref() {
+            unsafe {
+                env::set_var("GREENTIC_ENV", env_value);
+            }
+        }
+        let payload = serde_json::from_str::<JsonValue>(&self.input_json)
+            .map_err(|err| anyhow!("invalid --input-json: {err}"))?;
+        domains::ensure_cbor_packs(&self.bundle)?;
+        let discovery = discovery::discover_with_options(
+            &self.bundle,
+            discovery::DiscoveryOptions { cbor_only: true },
+        )?;
+        let secrets_handle =
+            secrets_gate::resolve_secrets_manager(&self.bundle, &self.tenant, Some(&self.team))?;
+        let runner_host =
+            DemoRunnerHost::new(self.bundle.clone(), &discovery, None, secrets_handle, false)?;
+        let ctx = OperatorContext {
+            tenant: self.tenant.clone(),
+            team: Some(self.team.clone()),
+            correlation_id: None,
+        };
+        let scope = ResolveScope {
+            env: env::var("GREENTIC_ENV").ok(),
+            tenant: Some(self.tenant.clone()),
+            team: Some(self.team.clone()),
+        };
+        let (topics, subscriptions) = runner_host.capability_event_bindings_in_scope(&scope)?;
+        let artifacts =
+            capability_runtime::build_catalog_artifacts(&[], &topics, &subscriptions, &ctx, &scope);
+        let report = capability_events::publish_event(
+            &self.bundle,
+            &runner_host,
+            &ctx,
+            &artifacts.topics,
+            &artifacts.subscriptions,
+            capability_events::PublishEventRequest {
+                topic: self.topic,
+                event_type: self.event_type,
+                payload,
+                correlation_id: None,
+                source: Some("demo capability events publish".to_string()),
+            },
+        )?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "matched_subscriptions": report.matched_subscriptions,
+                "successful_deliveries": report.successful_deliveries,
+                "failed_deliveries": report.failed_deliveries,
+            }))?
+        );
+        Ok(())
+    }
+}
+
+impl DemoCapabilityEventsTailArgs {
+    fn run(self) -> anyhow::Result<()> {
+        let events = capability_events::read_events(&self.bundle, &self.tenant, Some(&self.team))?;
+        for item in events {
+            println!("{}", serde_json::to_string(&item)?);
+        }
+        Ok(())
+    }
+}
+
+impl DemoCapabilityEventsDlqArgs {
+    fn run(self) -> anyhow::Result<()> {
+        let items =
+            capability_events::read_dead_letters(&self.bundle, &self.tenant, Some(&self.team))?;
+        for item in items {
+            println!("{}", serde_json::to_string(&item)?);
+        }
+        Ok(())
+    }
+}
+
+impl DemoCapabilityEventsReplayArgs {
+    fn run(self) -> anyhow::Result<()> {
+        if let Some(env_value) = self.env.as_ref() {
+            unsafe {
+                env::set_var("GREENTIC_ENV", env_value);
+            }
+        }
+        domains::ensure_cbor_packs(&self.bundle)?;
+        let discovery = discovery::discover_with_options(
+            &self.bundle,
+            discovery::DiscoveryOptions { cbor_only: true },
+        )?;
+        let secrets_handle =
+            secrets_gate::resolve_secrets_manager(&self.bundle, &self.tenant, Some(&self.team))?;
+        let runner_host =
+            DemoRunnerHost::new(self.bundle.clone(), &discovery, None, secrets_handle, false)?;
+        let ctx = OperatorContext {
+            tenant: self.tenant.clone(),
+            team: Some(self.team.clone()),
+            correlation_id: None,
+        };
+        let scope = ResolveScope {
+            env: env::var("GREENTIC_ENV").ok(),
+            tenant: Some(self.tenant.clone()),
+            team: Some(self.team.clone()),
+        };
+        let (topics, subscriptions) = runner_host.capability_event_bindings_in_scope(&scope)?;
+        let artifacts =
+            capability_runtime::build_catalog_artifacts(&[], &topics, &subscriptions, &ctx, &scope);
+        let report = capability_events::replay_event(
+            &self.bundle,
+            &runner_host,
+            &ctx,
+            &artifacts.topics,
+            &artifacts.subscriptions,
+            self.event_id.as_deref(),
+            self.delivery_id.as_deref(),
+        )?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "matched_subscriptions": report.matched_subscriptions,
+                "successful_deliveries": report.successful_deliveries,
+                "failed_deliveries": report.failed_deliveries,
+            }))?
+        );
+        Ok(())
+    }
+}
+
 impl DemoCapabilitySetupPlanArgs {
     fn run(self) -> anyhow::Result<()> {
         domains::ensure_cbor_packs(&self.bundle)?;
@@ -1651,6 +2152,26 @@ impl DemoCapabilitySetupPlanArgs {
             team: Some(self.team),
             correlation_id: None,
         };
+        let scope = ResolveScope {
+            env: env::var("GREENTIC_ENV").ok(),
+            tenant: Some(ctx.tenant.clone()),
+            team: ctx.team.clone(),
+        };
+        let offers = runner_host.capability_offers_in_scope(&scope);
+        let (topics, subscriptions) = runner_host.capability_event_bindings_in_scope(&scope)?;
+        let artifacts = capability_runtime::build_catalog_artifacts(
+            &offers,
+            &topics,
+            &subscriptions,
+            &ctx,
+            &scope,
+        );
+        let _paths = capability_runtime::write_capability_catalog_artifacts(
+            &self.bundle,
+            &ctx.tenant,
+            ctx.team.as_deref(),
+            &artifacts,
+        )?;
         let plan = runner_host.capability_setup_plan(&ctx);
         if plan.is_empty() {
             println!(
@@ -4546,6 +5067,37 @@ fn print_capability_outcome(outcome: &FlowOutcome) -> anyhow::Result<()> {
         println!("{}", serde_json::to_string_pretty(value)?);
     }
     Ok(())
+}
+
+fn validate_pack_schema(
+    pack_path: &str,
+    schema_ref: &str,
+    value: &JsonValue,
+) -> anyhow::Result<()> {
+    let schema = load_pack_schema(pack_path, schema_ref)?;
+    jsonschema::validate(&schema, value).map_err(|err| anyhow!("{err}"))
+}
+
+fn load_pack_schema(pack_path: &str, schema_ref: &str) -> anyhow::Result<JsonValue> {
+    let path = Path::new(pack_path);
+    if path.is_dir() {
+        let schema_path = path.join(schema_ref);
+        let bytes = fs::read(&schema_path)
+            .with_context(|| format!("failed to read schema {}", schema_path.display()))?;
+        return serde_json::from_slice(&bytes)
+            .with_context(|| format!("failed to parse schema {}", schema_path.display()));
+    }
+
+    let file = fs::File::open(path)?;
+    let mut archive = zip::ZipArchive::new(file)?;
+    let mut entry = archive
+        .by_name(schema_ref)
+        .with_context(|| format!("schema {schema_ref} missing in {}", path.display()))?;
+    let mut bytes = Vec::new();
+    use std::io::Read as _;
+    entry.read_to_end(&mut bytes)?;
+    serde_json::from_slice(&bytes)
+        .with_context(|| format!("failed to parse schema {schema_ref} in {}", path.display()))
 }
 
 #[derive(Parser)]
