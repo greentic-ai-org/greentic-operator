@@ -747,6 +747,7 @@ mod tests {
             bundles: Vec::new(),
             revisions: vec![rev],
             traffic_splits: Vec::new(),
+            messaging_endpoints: Vec::new(),
             revocation: Default::default(),
             retention: Default::default(),
             health: Default::default(),
