@@ -281,14 +281,14 @@ fn print_demo_help() {
         "  subscriptions  {}",
         operator_i18n::tr(
             "cli.demo.help.command.subscriptions",
-            "Manage demo subscriptions via provider components"
+            "Manage subscriptions via provider components"
         )
     );
     println!(
         "  capability     {}",
         operator_i18n::tr(
             "cli.demo.help.command.capability",
-            "Manage capability resolution/invocation in demo bundles"
+            "Manage capability resolution and invocation in the local runtime"
         )
     );
     println!(

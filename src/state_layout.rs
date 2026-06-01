@@ -29,6 +29,22 @@ pub fn secrets_log_path(root: &Path, action: &str) -> anyhow::Result<PathBuf> {
         .join(format!("{action}-{timestamp}.log")))
 }
 
+pub fn capability_state_dir(root: &Path, tenant: &str, team: Option<&str>) -> PathBuf {
+    root.join("state")
+        .join("capabilities")
+        .join(tenant)
+        .join(team.unwrap_or("default"))
+}
+
+pub fn capability_state_path(
+    root: &Path,
+    tenant: &str,
+    team: Option<&str>,
+    file_name: &str,
+) -> PathBuf {
+    capability_state_dir(root, tenant, team).join(file_name)
+}
+
 fn domain_name(domain: Domain) -> &'static str {
     match domain {
         Domain::Messaging => "messaging",
