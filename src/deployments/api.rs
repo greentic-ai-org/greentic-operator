@@ -182,12 +182,10 @@ fn check_trust_boundary(
                 ),
             )));
         }
-        // A local tunnel daemon (cloudflared/ngrok — `demo up` starts one
-        // by default) connects from a loopback peer, so the check above
-        // cannot see tunneled remote traffic. The daemon always injects
-        // forwarding headers the remote caller cannot strip — refuse on
-        // their presence. Skipped when `loopback_only = false`: a Phase D
-        // upstream admission proxy legitimately adds these headers.
+        // Tunnel daemons collapse the peer-IP check above (module doc,
+        // "No proxy/tunnel forwarding markers"). Skipped when
+        // `loopback_only = false`: a Phase D upstream admission proxy
+        // legitimately adds these headers.
         if let Some(marker) = forwarding_marker(headers) {
             return Err(into_error(error_response(
                 StatusCode::FORBIDDEN,
@@ -480,6 +478,15 @@ mod tests {
         })
     }
 
+    /// `loopback_only = false` variant — the Phase D "caller wired their own
+    /// admission upstream" configuration.
+    fn state_with_tempdir_open(tmp: &tempfile::TempDir) -> Arc<DeploymentsState> {
+        Arc::new(DeploymentsState {
+            env_root: Some(tmp.path().to_path_buf()),
+            loopback_only: false,
+        })
+    }
+
     fn loopback_peer() -> SocketAddr {
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 1234)
     }
@@ -742,10 +749,7 @@ mod tests {
         // legitimately adds forwarding headers — the marker check must not
         // fire once the caller has wired real admission upstream.
         let tmp = tempfile::tempdir().unwrap();
-        let state = Arc::new(DeploymentsState {
-            env_root: Some(tmp.path().to_path_buf()),
-            loopback_only: false,
-        });
+        let state = state_with_tempdir_open(&tmp);
         let mut headers = HeaderMap::new();
         headers.insert("x-forwarded-for", HeaderValue::from_static("203.0.113.7"));
         check_trust_boundary(remote_peer(), &headers, &state)
@@ -757,10 +761,7 @@ mod tests {
         // Phase D path: caller has wired in their own admission upstream.
         // We still defend in depth against browser CSRF via Origin.
         let tmp = tempfile::tempdir().unwrap();
-        let state = Arc::new(DeploymentsState {
-            env_root: Some(tmp.path().to_path_buf()),
-            loopback_only: false,
-        });
+        let state = state_with_tempdir_open(&tmp);
         let headers = HeaderMap::new();
         check_trust_boundary(remote_peer(), &headers, &state)
             .expect("remote peer must pass when loopback_only=false");
