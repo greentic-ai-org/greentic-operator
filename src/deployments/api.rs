@@ -14,6 +14,12 @@
 //!
 //! - **Peer must be loopback** when `loopback_only` is set. Set to `false`
 //!   only after mTLS / admin admission lands.
+//! - **No proxy/tunnel forwarding markers** when `loopback_only` is set —
+//!   tunnel daemons (cloudflared, ngrok) run locally and connect from a
+//!   loopback peer, so the peer-IP check alone cannot tell tunneled remote
+//!   traffic from a genuinely local caller. The daemon always injects
+//!   forwarding headers the remote caller cannot strip; their presence
+//!   fails the gate.
 //! - **`Origin` header (if present) must point at loopback** — blocks
 //!   browser cross-origin CSRF even when the bind address is loopback
 //!   (the shared ingress applies wildcard CORS to all responses).
@@ -166,14 +172,32 @@ fn check_trust_boundary(
     headers: &HeaderMap<HeaderValue>,
     state: &Arc<DeploymentsState>,
 ) -> Result<(), DeploymentError> {
-    if state.loopback_only && !peer_addr.ip().is_loopback() {
-        return Err(into_error(error_response(
-            StatusCode::FORBIDDEN,
-            format!(
-                "/deployments/* refused: peer {peer_addr} is not loopback; \
-                 mTLS / admin admission is Phase D (plan §B4b)"
-            ),
-        )));
+    if state.loopback_only {
+        if !peer_addr.ip().is_loopback() {
+            return Err(into_error(error_response(
+                StatusCode::FORBIDDEN,
+                format!(
+                    "/deployments/* refused: peer {peer_addr} is not loopback; \
+                     mTLS / admin admission is Phase D (plan §B4b)"
+                ),
+            )));
+        }
+        // A local tunnel daemon (cloudflared/ngrok — `demo up` starts one
+        // by default) connects from a loopback peer, so the check above
+        // cannot see tunneled remote traffic. The daemon always injects
+        // forwarding headers the remote caller cannot strip — refuse on
+        // their presence. Skipped when `loopback_only = false`: a Phase D
+        // upstream admission proxy legitimately adds these headers.
+        if let Some(marker) = forwarding_marker(headers) {
+            return Err(into_error(error_response(
+                StatusCode::FORBIDDEN,
+                format!(
+                    "/deployments/* refused: request bears forwarding marker \
+                     `{marker}` (proxied/tunneled traffic); direct local \
+                     callers only until mTLS lands (plan §B4b)"
+                ),
+            )));
+        }
     }
     if let Some(origin) = headers.get(ORIGIN).and_then(|v| v.to_str().ok())
         && !is_loopback_origin(origin)
@@ -187,6 +211,28 @@ fn check_trust_boundary(
         )));
     }
     Ok(())
+}
+
+/// Header names (already lowercase in hyper's `HeaderMap`) that mark a
+/// request as having transited a reverse proxy or tunnel daemon. Covers the
+/// `X-Forwarded` family (cloudflared, ngrok, generic proxies), `X-Real-IP`
+/// (nginx), and RFC 7239 `Forwarded`.
+const FORWARDING_MARKER_HEADERS: [&str; 5] = [
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-forwarded-proto",
+    "x-real-ip",
+    "forwarded",
+];
+
+/// First forwarding marker borne by the request, if any: a known forwarding
+/// header or any `cf-*` header (cloudflared injects several beyond the
+/// `X-Forwarded` family, e.g. `cf-connecting-ip`, `cf-ray`).
+fn forwarding_marker(headers: &HeaderMap<HeaderValue>) -> Option<&str> {
+    headers
+        .keys()
+        .map(|name| name.as_str())
+        .find(|name| FORWARDING_MARKER_HEADERS.contains(name) || name.starts_with("cf-"))
 }
 
 /// True for `http(s)://localhost[:port]`, `http(s)://127.0.0.1[:port]`,
@@ -652,6 +698,58 @@ mod tests {
         let err = check_trust_boundary(loopback_peer(), &headers, &state)
             .expect_err("remote Origin must be refused");
         assert_eq!(err.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn check_trust_boundary_blocks_tunneled_loopback_traffic() {
+        // The cloudflared scenario: `demo up` tunnels a local port, so
+        // remote traffic arrives with a loopback TCP peer and no Origin
+        // (curl-style). The tunnel daemon injects forwarding headers the
+        // remote caller cannot strip — the gate must refuse on them.
+        let tmp = tempfile::tempdir().unwrap();
+        let state = state_with_tempdir(&tmp);
+        let mut cloudflared = HeaderMap::new();
+        cloudflared.insert("cf-connecting-ip", HeaderValue::from_static("203.0.113.7"));
+        cloudflared.insert("cf-ray", HeaderValue::from_static("8a1b2c3d4e5f6789-AMS"));
+        cloudflared.insert("x-forwarded-for", HeaderValue::from_static("203.0.113.7"));
+        let err = check_trust_boundary(loopback_peer(), &cloudflared, &state)
+            .expect_err("cloudflared-tunneled traffic must be refused");
+        assert_eq!(err.status(), StatusCode::FORBIDDEN);
+
+        // ngrok injects only the X-Forwarded family — each marker alone
+        // must trip the gate.
+        for (name, value) in [
+            ("x-forwarded-for", "203.0.113.7"),
+            ("x-forwarded-host", "abc123.ngrok-free.app"),
+            ("x-forwarded-proto", "https"),
+            ("x-real-ip", "203.0.113.7"),
+            ("forwarded", "for=203.0.113.7"),
+            ("cf-warp-tag-id", "tag"),
+        ] {
+            let mut headers = HeaderMap::new();
+            headers.insert(name, HeaderValue::from_static(value));
+            let err = match check_trust_boundary(loopback_peer(), &headers, &state) {
+                Err(err) => err,
+                Ok(()) => panic!("marker `{name}` must be refused"),
+            };
+            assert_eq!(err.status(), StatusCode::FORBIDDEN, "marker `{name}`");
+        }
+    }
+
+    #[test]
+    fn loopback_only_false_allows_forwarding_markers() {
+        // Phase D path: an upstream admission proxy (mTLS terminator)
+        // legitimately adds forwarding headers — the marker check must not
+        // fire once the caller has wired real admission upstream.
+        let tmp = tempfile::tempdir().unwrap();
+        let state = Arc::new(DeploymentsState {
+            env_root: Some(tmp.path().to_path_buf()),
+            loopback_only: false,
+        });
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", HeaderValue::from_static("203.0.113.7"));
+        check_trust_boundary(remote_peer(), &headers, &state)
+            .expect("forwarding markers must pass when loopback_only=false");
     }
 
     #[test]
