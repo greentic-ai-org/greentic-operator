@@ -41,8 +41,10 @@ async-trait = "0.1"
 base64 = "0.22"
 chrono = "0.4"
 directories-next = "2"
-greentic-deploy-spec = ">=0.1, <0.2"
-greentic-deployer = ">=1.1.0-dev, <1.2.0-0"
+# Floor 0.1.26948183687: ExtensionBinding / ExtensionRef (Path 3 capability slot).
+greentic-deploy-spec = ">=0.1.26948183687, <0.2"
+# Floor 1.1.0-dev.26948183687: `op extensions` noun (compiled into this CLI via OpCommand).
+greentic-deployer = ">=1.1.0-dev.26948183687, <1.2.0-0"
 greentic-setup = ">=1.1.0-dev, <1.2.0-0"
 greentic-qa-lib = ">=1.1.0-dev, <1.2.0-0"
 greentic-start = ">=1.1.0-dev, <1.2.0-0"
