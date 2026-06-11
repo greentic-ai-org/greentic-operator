@@ -2469,6 +2469,9 @@ impl DemoUpArgs {
     fn to_start_request(&self) -> StartRequest {
         StartRequest {
             bundle: self.bundle.as_ref().map(|path| path.display().to_string()),
+            // Demo verbs drive the legacy bundle path; the env-store boot
+            // source (greentic-start `--env`) is not part of the demo flow.
+            env: None,
             tenant: self.tenant.clone(),
             team: self.team.clone(),
             no_nats: self.no_nats,
@@ -2508,6 +2511,7 @@ impl DemoStopArgs {
     fn run(self) -> anyhow::Result<()> {
         run_stop_request(StopRequest {
             bundle: self.bundle.map(|path| path.display().to_string()),
+            env: None,
             state_dir: self.state_dir,
             tenant: self.tenant,
             team: self.team,
