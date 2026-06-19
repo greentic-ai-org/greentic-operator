@@ -633,7 +633,10 @@ mod tests {
                 StatusCode::BAD_REQUEST,
             ),
             (OpError::NotFound("x".into()), StatusCode::NOT_FOUND),
-            (OpError::NotYetImplemented("x"), StatusCode::NOT_IMPLEMENTED),
+            (
+                OpError::NotYetImplemented("x".into()),
+                StatusCode::NOT_IMPLEMENTED,
+            ),
             (OpError::Conflict("x".into()), StatusCode::CONFLICT),
             (
                 OpError::Unauthorized {
@@ -818,8 +821,10 @@ mod tests {
             sequence: 1,
             created_at: Utc::now(),
             bundle_digest: "sha256:00".into(),
+            bundle_source_uri: None,
             pack_list: Vec::new(),
             pack_list_lock_ref: PathBuf::from("pack-list.lock"),
+            pack_config_refs: Vec::new(),
             config_digest: "sha256:00".into(),
             signature_sidecar_ref: PathBuf::from("rev.sig"),
             lifecycle,
@@ -841,6 +846,7 @@ mod tests {
                 tenant_org_id: None,
                 listen_addr: None,
                 public_base_url: None,
+                gui_enabled: None,
             },
             packs: Vec::new(),
             credentials_ref: None,

@@ -1085,6 +1085,7 @@ mod tests {
             signatures: PackSignatures::default(),
             bootstrap: None,
             extensions: Some(extensions),
+            agents: BTreeMap::new(),
         };
 
         let bytes = greentic_types::encode_pack_manifest(&manifest)?;
@@ -1148,6 +1149,7 @@ mod tests {
             signatures: PackSignatures::default(),
             bootstrap: None,
             extensions: Some(extensions),
+            agents: BTreeMap::new(),
         };
 
         let bytes = greentic_types::encode_pack_manifest(&manifest)?;
