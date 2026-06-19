@@ -144,5 +144,6 @@ fn blocking_pack_manifest(pack_id: &str) -> Result<PackManifest> {
         signatures: PackSignatures::default(),
         bootstrap: None,
         extensions: None,
+        agents: BTreeMap::new(),
     })
 }

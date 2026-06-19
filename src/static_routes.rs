@@ -635,6 +635,7 @@ mod tests {
             signatures: PackSignatures::default(),
             bootstrap: None,
             extensions: Some(extensions),
+            agents: BTreeMap::new(),
         };
         let file = std::fs::File::create(path).expect("create pack");
         let mut zip = zip::ZipWriter::new(file);
