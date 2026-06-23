@@ -2778,9 +2778,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-deployer"
-version = "1.1.0-dev.27909470946"
+version = "1.1.0-dev.28009791814"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0609e2a21703b55981fe8e0f20c4c1a9008912b49d58c8b73c0a6a910e25665f"
+checksum = "72a21ec7b925e2513957b69e968494cd5121ba28ece425d17be13a412c25aaca"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2790,6 +2790,7 @@ dependencies = [
  "aws-sdk-secretsmanager",
  "aws-sdk-sts",
  "aws-smithy-runtime-api",
+ "base64 0.22.1",
  "chrono",
  "clap",
  "ed25519-dalek",
@@ -3124,9 +3125,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-runner-desktop"
-version = "1.1.0-dev.27823510319"
+version = "1.1.0-dev.27944159728"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23fde694a6467917fe57ed9dc34229d6a374394532255640182340e5a344a60e"
+checksum = "00db21859fcc49086962c8de86b385f1d22982a70f6db839872199a5f3c943aa"
 dependencies = [
  "anyhow",
  "greentic-pack-lib",
@@ -3145,9 +3146,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-runner-host"
-version = "1.1.0-dev.27823510319"
+version = "1.1.0-dev.27944159728"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e806d3e858ee0484111fc5b153eb52bd3372ed2dac44a87ba5afe73c989f068f"
+checksum = "0464540ecff516f09e5cae658abf68d468786c6bd0fe39ed3de888dec7681be3"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3323,9 +3324,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-setup"
-version = "1.1.0-dev.27821248534"
+version = "1.1.0-dev.27946905361"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e9d12ab7955dd25f7e1581c1bd287098f86fb741f891019518fc2d17bea4dd4"
+checksum = "1c5f7001c8d3c04bfcca84911c845ef36cd1f51bfba2eb91f0decb4d8efa3ff6"
 dependencies = [
  "aes-gcm-siv",
  "anyhow",
@@ -3361,9 +3362,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-start"
-version = "1.1.0-dev.27840192674"
+version = "1.1.0-dev.27978051609"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9eec7656f932d642542923d7abc8985e41ec9973b7488d08cd83095859e43e88"
+checksum = "69381813281ba0851eac990c9dc183067964b04c7eaeff46addb13bd397ca32c"
 dependencies = [
  "anyhow",
  "arc-swap",
