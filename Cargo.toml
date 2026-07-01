@@ -4,7 +4,7 @@ bin = [
 
 [package]
 name = "greentic-operator"
-version = "1.1.0-dev.0"
+version = "1.1.1-dev.0"
 edition = "2024"
 rust-version = "1.95"
 description = "Greentic operator CLI for local dev and demo orchestration."
@@ -44,7 +44,7 @@ directories-next = "2"
 # Floor 0.1.26948183687: ExtensionBinding / ExtensionRef (Path 3 capability slot).
 greentic-deploy-spec = ">=0.1.26948183687, <0.2"
 # Floor 1.1.0-dev.26948183687: `op extensions` noun (compiled into this CLI via OpCommand).
-greentic-deployer = ">=1.1.0-dev.26948183687, <1.2.0-0"
+greentic-deployer = ">=1.1.0-dev, <1.2.0-0"
 greentic-setup = ">=1.1.0-dev, <1.2.0-0"
 greentic-qa-lib = ">=1.1.0-dev, <1.2.0-0"
 greentic-start = ">=1.1.0-dev, <1.2.0-0"
