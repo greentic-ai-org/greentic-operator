@@ -3000,7 +3000,7 @@ dependencies = [
 
 [[package]]
 name = "greentic-operator"
-version = "1.1.0-dev.0"
+version = "1.1.1-dev.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3283,7 +3283,7 @@ dependencies = [
 
 [[package]]
 name = "greentic-secrets-repro"
-version = "1.1.0-dev.0"
+version = "1.1.1-dev.0"
 dependencies = [
  "anyhow",
  "greentic-secrets-lib",
@@ -6331,7 +6331,7 @@ dependencies = [
 
 [[package]]
 name = "secret_name"
-version = "1.1.0-dev.0"
+version = "1.1.1-dev.0"
 
 [[package]]
 name = "security-framework"
