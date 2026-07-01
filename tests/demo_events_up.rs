@@ -49,6 +49,7 @@ fn build_manifest(pack_id: &str) -> anyhow::Result<PackManifest> {
         signatures: PackSignatures::default(),
         bootstrap: None,
         extensions: None,
+        agents: std::collections::BTreeMap::new(),
     })
 }
 
@@ -70,6 +71,7 @@ fn simple_flow(flow_id: &str) -> anyhow::Result<Flow> {
             output: OutputMapping {
                 mapping: Value::Null,
             },
+            err_map: None,
             routing: Routing::End,
             telemetry: TelemetryHints::default(),
         },
@@ -102,7 +104,7 @@ fn demo_up_uses_in_process_events_when_events_packs_exist() {
 team: default
 services:
   messaging:
-    enabled: false
+    enabled: "false"
   nats:
     enabled: true
     url: "nats://127.0.0.1:4222"
@@ -151,10 +153,12 @@ services:
         None,
         None,
         None,
+        None,
         &BTreeSet::new(),
         None,
         &log_dir,
         true,
+        false,
     )
     .unwrap();
 

@@ -1,6 +1,16 @@
+//! Provider configuration envelope reader/writer for greentic-operator.
+//!
+//! # DEPRECATED (Phase B / B12a)
+//!
+//! `config.envelope.cbor` is a transitional on-disk sink for non-secret provider
+//! configuration. It's kept alive for runtime compatibility until `pack-config.v1`
+//! ships and B12a migrates secret material into the env's secrets backend.
+//! Once the migration lands this module should be deleted.
+
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Once;
 
 use anyhow::{Context, anyhow};
 use chrono::Utc;
@@ -18,6 +28,21 @@ use zip::ZipArchive;
 use crate::runtime_state::atomic_write;
 
 const ABI_VERSION: &str = "greentic:component@0.6.0";
+
+// DEPRECATED (Phase B / B12a): once-per-process deprecation warnings for the
+// envelope reader path. See caller below.
+static WARN_READ_ENVELOPE: Once = Once::new();
+
+fn warn_envelope_read_deprecated(path: &Path) {
+    WARN_READ_ENVELOPE.call_once(|| {
+        tracing::warn!(
+            target: "greentic_operator::deprecated",
+            path = %path.display(),
+            "reading .providers/<provider>/config.envelope.cbor — deprecated sink, \
+             migrate to pack-config.v1 (Phase B / B12a)"
+        );
+    });
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigEnvelope {
@@ -53,6 +78,8 @@ struct PackProvenance {
     config_schema: Option<JsonValue>,
 }
 
+/// DEPRECATED (Phase B / B12a): writes the transitional non-secret config sink.
+/// Migration target is `pack-config.v1`. Kept alive for runtime compatibility.
 pub fn write_provider_config_envelope(
     providers_root: &Path,
     provider_id: &str,
@@ -61,6 +88,14 @@ pub fn write_provider_config_envelope(
     pack_path: &Path,
     backup: bool,
 ) -> anyhow::Result<PathBuf> {
+    static WARN_WRITE: Once = Once::new();
+    WARN_WRITE.call_once(|| {
+        tracing::warn!(
+            target: "greentic_operator::deprecated",
+            "writing .providers/<provider>/config.envelope.cbor — deprecated sink, \
+             migrate to pack-config.v1 (Phase B / B12a)"
+        );
+    });
     let provenance = read_pack_provenance(pack_path, provider_id)?;
     let _ = write_contract_cache_entry(providers_root, &provenance);
     let envelope = ConfigEnvelope {
@@ -99,6 +134,7 @@ pub fn read_provider_config_envelope(
     if !path.exists() {
         return Ok(None);
     }
+    warn_envelope_read_deprecated(&path);
     let bytes = std::fs::read(&path)?;
     let envelope: ConfigEnvelope = serde_cbor::from_slice(&bytes)?;
     Ok(Some(envelope))
@@ -214,6 +250,7 @@ fn read_pack_provenance(
             })
             .unwrap_or_default(),
         config_schema: SchemaIr::Null,
+        outcomes: Vec::new(),
     };
     let describe_hash = hash_canonical(&describe)?;
 

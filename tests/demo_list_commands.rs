@@ -66,6 +66,7 @@ fn build_manifest(pack_id: &str, flows: &[&str]) -> anyhow::Result<PackManifest>
         signatures: PackSignatures::default(),
         bootstrap: None,
         extensions: None,
+        agents: BTreeMap::new(),
     })
 }
 
@@ -91,6 +92,7 @@ fn simple_flow(flow_id: &str) -> anyhow::Result<Flow> {
             output: OutputMapping {
                 mapping: Value::Null,
             },
+            err_map: None,
             routing: Routing::End,
             telemetry: TelemetryHints::default(),
         },

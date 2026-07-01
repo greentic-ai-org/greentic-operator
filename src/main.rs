@@ -141,6 +141,13 @@ fn print_top_level_help() {
         operator_i18n::tr("cli.main.help.command_demo", "")
     );
     println!(
+        "  op      {}",
+        operator_i18n::tr(
+            "cli.main.help.command_op",
+            "Operator command surface (env, env-packs, bundles, revisions, traffic, config, credentials, secrets)"
+        )
+    );
+    println!(
         "  help    {}",
         operator_i18n::tr(
             "cli.main.help.command_help",
@@ -274,14 +281,14 @@ fn print_demo_help() {
         "  subscriptions  {}",
         operator_i18n::tr(
             "cli.demo.help.command.subscriptions",
-            "Manage demo subscriptions via provider components"
+            "Manage subscriptions via provider components"
         )
     );
     println!(
         "  capability     {}",
         operator_i18n::tr(
             "cli.demo.help.command.capability",
-            "Manage capability resolution/invocation in demo bundles"
+            "Manage capability resolution and invocation in the local runtime"
         )
     );
     println!(
@@ -397,7 +404,7 @@ fn print_missing_subcommand_help() {
         )
     );
     eprintln!(
-        "  [{}: demo, help]",
+        "  [{}: demo, op, help]",
         operator_i18n::tr("cli.main.subcommands", "subcommands")
     );
     eprintln!();

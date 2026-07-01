@@ -77,8 +77,44 @@ pub struct CapabilityOfferRecord {
     pub priority: i32,
     pub requires_setup: bool,
     pub setup_qa_ref: Option<String>,
+    pub operation_id: Option<String>,
+    pub input_schema_ref: Option<String>,
+    pub output_schema_ref: Option<String>,
+    pub adapter_kind: Option<String>,
     scope: CapabilityScopeV1,
     pub applies_to_ops: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CapabilityTopicRecord {
+    pub topic: String,
+    pub event_type: String,
+    pub pack_id: String,
+    pub domain: Domain,
+    pub pack_path: PathBuf,
+    pub publisher_component_ref: String,
+    pub publisher_op: String,
+    pub payload_schema_ref: Option<String>,
+    pub adapter_kind: Option<String>,
+    pub priority: i32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CapabilitySubscriptionRecord {
+    pub subscription_id: String,
+    pub topic: String,
+    pub event_type: String,
+    pub pack_id: String,
+    pub domain: Domain,
+    pub pack_path: PathBuf,
+    pub capability_id: String,
+    pub op: String,
+    pub payload_schema_ref: Option<String>,
+    pub filter_json_pointer: Option<String>,
+    pub filter_equals: Option<String>,
+    pub delivery_mode: String,
+    pub max_attempts: u32,
+    pub priority: i32,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -129,6 +165,10 @@ impl CapabilityRegistry {
                         priority: offer.priority,
                         requires_setup: offer.requires_setup,
                         setup_qa_ref,
+                        operation_id: offer.operation_id,
+                        input_schema_ref: offer.input_schema_ref,
+                        output_schema_ref: offer.output_schema_ref,
+                        adapter_kind: offer.adapter_kind,
                         scope: offer.scope.unwrap_or_default(),
                         applies_to_ops,
                     });
@@ -151,6 +191,23 @@ impl CapabilityRegistry {
             .get(cap_id)
             .map(Vec::as_slice)
             .unwrap_or_default()
+    }
+
+    pub fn offers_in_scope(&self, scope: &ResolveScope) -> Vec<CapabilityOfferRecord> {
+        let mut selected = Vec::new();
+        for offers in self.by_cap_id.values() {
+            for offer in offers {
+                if scope_matches(&offer.scope, scope) {
+                    selected.push(offer.clone());
+                }
+            }
+        }
+        selected.sort_by(|a, b| {
+            a.priority
+                .cmp(&b.priority)
+                .then_with(|| a.stable_id.cmp(&b.stable_id))
+        });
+        selected
     }
 
     pub fn resolve(
@@ -259,6 +316,91 @@ impl CapabilityRegistry {
 
         warnings
     }
+}
+
+pub fn collect_event_bindings_for_packs(
+    pack_index: &BTreeMap<PathBuf, CapabilityPackRecord>,
+    scope: &ResolveScope,
+) -> anyhow::Result<(
+    Vec<CapabilityTopicRecord>,
+    Vec<CapabilitySubscriptionRecord>,
+)> {
+    let mut topics = Vec::new();
+    let mut subscriptions = Vec::new();
+
+    for (pack_path, pack_record) in pack_index {
+        let Some(ext) = read_capabilities_extension(pack_path)? else {
+            continue;
+        };
+
+        for topic in ext.topics {
+            if !scope_matches(&topic.scope.unwrap_or_default(), scope) {
+                continue;
+            }
+            topics.push(CapabilityTopicRecord {
+                topic: topic.topic,
+                event_type: topic.event_type,
+                pack_id: pack_record.pack_id.clone(),
+                domain: pack_record.domain,
+                pack_path: pack_path.clone(),
+                publisher_component_ref: topic.publisher.component_ref,
+                publisher_op: topic.publisher.op,
+                payload_schema_ref: topic.payload_schema_ref,
+                adapter_kind: topic.adapter_kind,
+                priority: topic.priority,
+            });
+        }
+
+        for subscription in ext.subscriptions {
+            if !scope_matches(&subscription.scope.unwrap_or_default(), scope) {
+                continue;
+            }
+            subscriptions.push(CapabilitySubscriptionRecord {
+                subscription_id: subscription.subscription_id,
+                topic: subscription.topic,
+                event_type: subscription.event_type,
+                pack_id: pack_record.pack_id.clone(),
+                domain: pack_record.domain,
+                pack_path: pack_path.clone(),
+                capability_id: subscription.subscriber.capability_id,
+                op: subscription.subscriber.op,
+                payload_schema_ref: subscription.payload_schema_ref,
+                filter_json_pointer: subscription
+                    .filter
+                    .as_ref()
+                    .and_then(|value| value.json_pointer.clone()),
+                filter_equals: subscription.filter.and_then(|value| value.equals),
+                delivery_mode: subscription
+                    .delivery
+                    .as_ref()
+                    .and_then(|value| value.mode.clone())
+                    .unwrap_or_else(|| "at_least_once".to_string()),
+                max_attempts: subscription
+                    .delivery
+                    .as_ref()
+                    .and_then(|value| value.max_attempts)
+                    .unwrap_or(1),
+                priority: subscription.priority,
+            });
+        }
+    }
+
+    topics.sort_by(|a, b| {
+        a.priority
+            .cmp(&b.priority)
+            .then_with(|| a.topic.cmp(&b.topic))
+            .then_with(|| a.event_type.cmp(&b.event_type))
+            .then_with(|| a.pack_id.cmp(&b.pack_id))
+    });
+    subscriptions.sort_by(|a, b| {
+        a.priority
+            .cmp(&b.priority)
+            .then_with(|| a.topic.cmp(&b.topic))
+            .then_with(|| a.subscription_id.cmp(&b.subscription_id))
+            .then_with(|| a.pack_id.cmp(&b.pack_id))
+    });
+
+    Ok((topics, subscriptions))
 }
 
 pub fn is_oauth_broker_operation(op_name: &str) -> bool {
@@ -443,6 +585,10 @@ struct CapabilitiesExtensionV1 {
     schema_version: u32,
     #[serde(default)]
     offers: Vec<CapabilityOfferV1>,
+    #[serde(default)]
+    topics: Vec<CapabilityTopicV1>,
+    #[serde(default)]
+    subscriptions: Vec<CapabilitySubscriptionV1>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -462,6 +608,14 @@ struct CapabilityOfferV1 {
     setup: Option<CapabilitySetupV1>,
     #[serde(default)]
     applies_to: Option<HookAppliesToV1>,
+    #[serde(default)]
+    operation_id: Option<String>,
+    #[serde(default)]
+    input_schema_ref: Option<String>,
+    #[serde(default)]
+    output_schema_ref: Option<String>,
+    #[serde(default)]
+    adapter_kind: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -489,6 +643,61 @@ struct CapabilitySetupV1 {
 struct HookAppliesToV1 {
     #[serde(default)]
     op_names: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CapabilityTopicV1 {
+    topic: String,
+    event_type: String,
+    publisher: CapabilityProviderRefV1,
+    #[serde(default)]
+    payload_schema_ref: Option<String>,
+    #[serde(default)]
+    adapter_kind: Option<String>,
+    #[serde(default)]
+    priority: i32,
+    #[serde(default)]
+    scope: Option<CapabilityScopeV1>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CapabilitySubscriptionV1 {
+    subscription_id: String,
+    topic: String,
+    event_type: String,
+    subscriber: CapabilitySubscriberRefV1,
+    #[serde(default)]
+    payload_schema_ref: Option<String>,
+    #[serde(default)]
+    filter: Option<CapabilityFilterV1>,
+    #[serde(default)]
+    delivery: Option<CapabilityDeliveryV1>,
+    #[serde(default)]
+    priority: i32,
+    #[serde(default)]
+    scope: Option<CapabilityScopeV1>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CapabilitySubscriberRefV1 {
+    capability_id: String,
+    op: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CapabilityFilterV1 {
+    #[serde(default)]
+    json_pointer: Option<String>,
+    #[serde(default)]
+    equals: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CapabilityDeliveryV1 {
+    #[serde(default)]
+    mode: Option<String>,
+    #[serde(default)]
+    max_attempts: Option<u32>,
 }
 
 const fn default_schema_version() -> u32 {
@@ -593,6 +802,10 @@ mod tests {
                     priority: 0,
                     requires_setup: false,
                     setup_qa_ref: None,
+                    operation_id: None,
+                    input_schema_ref: None,
+                    output_schema_ref: None,
+                    adapter_kind: None,
                     scope: CapabilityScopeV1::default(),
                     applies_to_ops: vec![OAUTH_OP_INITIATE_AUTH.to_string()],
                 },
@@ -608,6 +821,10 @@ mod tests {
                     priority: 1,
                     requires_setup: false,
                     setup_qa_ref: None,
+                    operation_id: None,
+                    input_schema_ref: None,
+                    output_schema_ref: None,
+                    adapter_kind: None,
                     scope: CapabilityScopeV1::default(),
                     applies_to_ops: vec![OAUTH_OP_AWAIT_RESULT.to_string()],
                 },
@@ -624,6 +841,95 @@ mod tests {
             )
             .expect("should resolve");
         assert_eq!(resolved.provider_op, "provider.await");
+    }
+
+    #[test]
+    fn offers_in_scope_filters_and_sorts_matching_offers() {
+        let mut by_cap_id = BTreeMap::new();
+        by_cap_id.insert(
+            "cap.example".to_string(),
+            vec![
+                CapabilityOfferRecord {
+                    stable_id: "offer.dev.b".to_string(),
+                    pack_id: "pack".to_string(),
+                    domain: Domain::Messaging,
+                    pack_path: PathBuf::from("/tmp/b.gtpack"),
+                    cap_id: "cap.example".to_string(),
+                    version: "1".to_string(),
+                    provider_component_ref: "provider".to_string(),
+                    provider_op: "op.b".to_string(),
+                    priority: 2,
+                    requires_setup: false,
+                    setup_qa_ref: None,
+                    operation_id: None,
+                    input_schema_ref: None,
+                    output_schema_ref: None,
+                    adapter_kind: None,
+                    scope: CapabilityScopeV1 {
+                        envs: vec!["dev".to_string()],
+                        tenants: Vec::new(),
+                        teams: Vec::new(),
+                    },
+                    applies_to_ops: Vec::new(),
+                },
+                CapabilityOfferRecord {
+                    stable_id: "offer.dev.a".to_string(),
+                    pack_id: "pack".to_string(),
+                    domain: Domain::Messaging,
+                    pack_path: PathBuf::from("/tmp/a.gtpack"),
+                    cap_id: "cap.example".to_string(),
+                    version: "1".to_string(),
+                    provider_component_ref: "provider".to_string(),
+                    provider_op: "op.a".to_string(),
+                    priority: 1,
+                    requires_setup: false,
+                    setup_qa_ref: None,
+                    operation_id: None,
+                    input_schema_ref: None,
+                    output_schema_ref: None,
+                    adapter_kind: None,
+                    scope: CapabilityScopeV1 {
+                        envs: vec!["dev".to_string()],
+                        tenants: Vec::new(),
+                        teams: Vec::new(),
+                    },
+                    applies_to_ops: Vec::new(),
+                },
+                CapabilityOfferRecord {
+                    stable_id: "offer.prod".to_string(),
+                    pack_id: "pack".to_string(),
+                    domain: Domain::Messaging,
+                    pack_path: PathBuf::from("/tmp/prod.gtpack"),
+                    cap_id: "cap.example".to_string(),
+                    version: "1".to_string(),
+                    provider_component_ref: "provider".to_string(),
+                    provider_op: "op.prod".to_string(),
+                    priority: 0,
+                    requires_setup: false,
+                    setup_qa_ref: None,
+                    operation_id: None,
+                    input_schema_ref: None,
+                    output_schema_ref: None,
+                    adapter_kind: None,
+                    scope: CapabilityScopeV1 {
+                        envs: vec!["prod".to_string()],
+                        tenants: Vec::new(),
+                        teams: Vec::new(),
+                    },
+                    applies_to_ops: Vec::new(),
+                },
+            ],
+        );
+        let registry = CapabilityRegistry { by_cap_id };
+        let scope = ResolveScope {
+            env: Some("dev".to_string()),
+            tenant: None,
+            team: None,
+        };
+        let offers = registry.offers_in_scope(&scope);
+        assert_eq!(offers.len(), 2);
+        assert_eq!(offers[0].stable_id, "offer.dev.a");
+        assert_eq!(offers[1].stable_id, "offer.dev.b");
     }
 
     #[test]
@@ -676,6 +982,38 @@ mod tests {
                 .len(),
             1,
             "oauth discovery capability offer missing from registry"
+        );
+    }
+
+    #[test]
+    fn event_bindings_load_from_capabilities_extension() {
+        let tmp = tempdir().expect("tempdir");
+        let pack_path = tmp.path().join("event-provider.gtpack");
+        write_gtpack_with_event_bindings(&pack_path).expect("write pack");
+
+        let mut pack_index = BTreeMap::new();
+        pack_index.insert(
+            pack_path.clone(),
+            CapabilityPackRecord {
+                pack_id: "event.provider".to_string(),
+                domain: Domain::Events,
+            },
+        );
+
+        let (topics, subscriptions) =
+            collect_event_bindings_for_packs(&pack_index, &ResolveScope::default())
+                .expect("event bindings");
+
+        assert_eq!(topics.len(), 1);
+        assert_eq!(subscriptions.len(), 1);
+        assert_eq!(topics[0].topic, "topic://example.domain.event.v1");
+        assert_eq!(
+            subscriptions[0].capability_id,
+            "cap://example.subscriber.v1"
+        );
+        assert_eq!(
+            subscriptions[0].filter_json_pointer.as_deref(),
+            Some("/kind")
         );
     }
 
@@ -747,6 +1085,71 @@ mod tests {
             signatures: PackSignatures::default(),
             bootstrap: None,
             extensions: Some(extensions),
+            agents: BTreeMap::new(),
+        };
+
+        let bytes = greentic_types::encode_pack_manifest(&manifest)?;
+        let file = File::create(path)?;
+        let mut zip = ZipWriter::new(file);
+        zip.start_file("manifest.cbor", FileOptions::<()>::default())?;
+        zip.write_all(&bytes)?;
+        zip.finish()?;
+        Ok(())
+    }
+
+    fn write_gtpack_with_event_bindings(path: &Path) -> anyhow::Result<()> {
+        let mut extensions = BTreeMap::new();
+        extensions.insert(
+            EXT_CAPABILITIES_V1.to_string(),
+            ExtensionRef {
+                kind: EXT_CAPABILITIES_V1.to_string(),
+                version: "1.0.0".to_string(),
+                digest: None,
+                location: None,
+                inline: Some(greentic_types::ExtensionInline::Other(json!({
+                    "schema_version": 1,
+                    "offers": [],
+                    "topics": [
+                        {
+                            "topic": "topic://example.domain.event.v1",
+                            "event_type": "example.domain.event.v1",
+                            "publisher": {"component_ref": "events.component", "op": "events.publish"},
+                            "payload_schema_ref": "schemas/event.schema.json",
+                            "priority": 10
+                        }
+                    ],
+                    "subscriptions": [
+                        {
+                            "subscription_id": "sub.example",
+                            "topic": "topic://example.domain.event.v1",
+                            "event_type": "example.domain.event.v1",
+                            "subscriber": {"capability_id": "cap://example.subscriber.v1", "op": "handle"},
+                            "payload_schema_ref": "schemas/event.schema.json",
+                            "filter": {"json_pointer": "/kind", "equals": "match"},
+                            "delivery": {"mode": "at_least_once", "max_attempts": 2},
+                            "priority": 20
+                        }
+                    ]
+                }))),
+            },
+        );
+
+        let manifest = PackManifest {
+            schema_version: "pack-v1".to_string(),
+            pack_id: PackId::new("event.provider").expect("pack id"),
+            name: None,
+            version: Version::parse("0.1.0").expect("version"),
+            kind: PackKind::Provider,
+            publisher: "demo".to_string(),
+            components: Vec::new(),
+            flows: Vec::new(),
+            dependencies: Vec::new(),
+            capabilities: Vec::new(),
+            secret_requirements: Vec::new(),
+            signatures: PackSignatures::default(),
+            bootstrap: None,
+            extensions: Some(extensions),
+            agents: BTreeMap::new(),
         };
 
         let bytes = greentic_types::encode_pack_manifest(&manifest)?;
@@ -778,6 +1181,10 @@ mod tests {
             priority: 100,
             requires_setup,
             setup_qa_ref: setup_qa_ref.map(String::from),
+            operation_id: None,
+            input_schema_ref: None,
+            output_schema_ref: None,
+            adapter_kind: None,
             scope: CapabilityScopeV1::default(),
             applies_to_ops: Vec::new(),
         }

@@ -61,9 +61,10 @@ use crate::runner_integration::run_flow_with_options;
 
 use crate::capabilities::{
     CAP_OAUTH_BROKER_V1, CAP_OAUTH_TOKEN_VALIDATION_V1, CapabilityBinding, CapabilityInstallRecord,
-    CapabilityPackRecord, CapabilityRegistry, HookStage, OAUTH_OP_AWAIT_RESULT,
-    OAUTH_OP_GET_ACCESS_TOKEN, OAUTH_OP_INITIATE_AUTH, OAUTH_OP_REQUEST_RESOURCE_TOKEN,
-    ResolveScope, is_binding_ready, is_oauth_broker_operation, write_install_record,
+    CapabilityPackRecord, CapabilityRegistry, CapabilitySubscriptionRecord, CapabilityTopicRecord,
+    HookStage, OAUTH_OP_AWAIT_RESULT, OAUTH_OP_GET_ACCESS_TOKEN, OAUTH_OP_INITIATE_AUTH,
+    OAUTH_OP_REQUEST_RESOURCE_TOKEN, ResolveScope, collect_event_bindings_for_packs,
+    is_binding_ready, is_oauth_broker_operation, write_install_record,
 };
 use crate::cards::CardRenderer;
 use crate::discovery;
@@ -306,6 +307,47 @@ impl DemoRunnerHost {
 
     pub fn resolve_hook_chain(&self, stage: HookStage, op_name: &str) -> Vec<CapabilityBinding> {
         self.capability_registry.resolve_hook_chain(stage, op_name)
+    }
+
+    pub fn capability_offers_in_scope(
+        &self,
+        scope: &ResolveScope,
+    ) -> Vec<crate::capabilities::CapabilityOfferRecord> {
+        self.capability_registry.offers_in_scope(scope)
+    }
+
+    pub fn capability_event_bindings_in_scope(
+        &self,
+        scope: &ResolveScope,
+    ) -> anyhow::Result<(
+        Vec<CapabilityTopicRecord>,
+        Vec<CapabilitySubscriptionRecord>,
+    )> {
+        let pack_index = self
+            .packs_by_path
+            .values()
+            .map(|pack| {
+                let domain = self
+                    .catalog
+                    .iter()
+                    .find_map(|((domain, _), provider)| {
+                        if provider.path == pack.path {
+                            Some(*domain)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(Domain::Messaging);
+                (
+                    pack.path.clone(),
+                    CapabilityPackRecord {
+                        pack_id: pack.pack_id.clone(),
+                        domain,
+                    },
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        collect_event_bindings_for_packs(&pack_index, scope)
     }
 
     pub fn has_provider_packs_for_domain(&self, domain: Domain) -> bool {
@@ -1309,6 +1351,7 @@ fn build_demo_host_config(tenant: &str) -> HostConfig {
         trace: TraceConfig::from_env(),
         validation: ValidationConfig::from_env(),
         operator_policy: OperatorPolicy::allow_all(),
+        fast2flow: Default::default(),
     }
 }
 
