@@ -234,11 +234,11 @@ fn forwarding_marker(headers: &HeaderMap<HeaderValue>) -> Option<&str> {
 }
 
 /// True for `http(s)://localhost[:port]`, `http(s)://127.0.0.1[:port]`,
-/// `http(s)://[::1][:port]`, and the literal `null` (sandboxed contexts).
+/// `http(s)://[::1][:port]`. The literal `null` is intentionally refused:
+/// browsers emit it from sandboxed iframes, `data:` URLs, and `file://`
+/// pages regardless of which site hosts the sandbox, so it is not evidence
+/// of a local caller.
 fn is_loopback_origin(origin: &str) -> bool {
-    if origin.eq_ignore_ascii_case("null") {
-        return true;
-    }
     let after_scheme = origin
         .strip_prefix("http://")
         .or_else(|| origin.strip_prefix("https://"))
@@ -570,12 +570,17 @@ mod tests {
     #[tokio::test]
     async fn end_to_end_through_deployer_lib_returns_typed_error_envelope() {
         // Drives a full happy-path payload through `dispatch` → deployer
-        // library → `op_error_response`. The deployer's `audit_and_record`
-        // wrapper runs `authorize_local_only` first, which denies inside the
-        // sandboxed test environment (no local-actor signal), so we expect a
-        // 403 with the documented envelope. The point of the test is the
-        // round-trip: handler invoked the lib, got a typed `OpError`, mapped
-        // it to the right HTTP status, and serialized the documented body.
+        // library → `op_error_response`. This crate's lockfile used to freeze
+        // on a develop-lane deployer whose deny-first `authorize_local_only`
+        // refused non-local env ids, so the assertion here was a 403. Every
+        // stable deployer since 1.1.0 uses `authorize_local_owner`, which
+        // allows local-store callers; the closure then fails because the
+        // environment does not exist in the empty tempdir, producing
+        // `OpError::NotFound` → 404. The point of the test is the round-trip:
+        // handler invoked the lib, got a typed `OpError`, mapped it to the
+        // right HTTP status, and serialized the documented body. Note this no
+        // longer covers the `unauthorized` → 403 mapping — nothing on this
+        // path denies any more.
         // ULIDs are Crockford Base32 (no I/L/O/U); use a real one so we
         // get past the ID-parse branch.
         let tmp = tempfile::tempdir().unwrap();
@@ -587,10 +592,10 @@ mod tests {
         }"#;
         let err = dispatch(Method::POST, "/deployments/stage", body, &state)
             .await
-            .expect_err("local-only auth denial must surface");
-        assert_eq!(err.status(), StatusCode::FORBIDDEN);
+            .expect_err("env-not-found must surface as typed error");
+        assert_eq!(err.status(), StatusCode::NOT_FOUND);
         let body = read_body_json(*err).await;
-        assert_eq!(body["error"]["kind"], "unauthorized");
+        assert_eq!(body["error"]["kind"], "not-found");
     }
 
     #[test]
@@ -692,8 +697,6 @@ mod tests {
             .expect("localhost Origin must pass");
         headers.insert(ORIGIN, HeaderValue::from_static("http://[::1]:8080"));
         check_trust_boundary(loopback_peer(), &headers, &state).expect("[::1] Origin must pass");
-        headers.insert(ORIGIN, HeaderValue::from_static("null"));
-        check_trust_boundary(loopback_peer(), &headers, &state).expect("`null` Origin must pass");
     }
 
     #[test]
@@ -708,6 +711,21 @@ mod tests {
         headers.insert(ORIGIN, HeaderValue::from_static("https://evil.example.com"));
         let err = check_trust_boundary(loopback_peer(), &headers, &state)
             .expect_err("remote Origin must be refused");
+        assert_eq!(err.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn check_trust_boundary_blocks_sandboxed_null_origin() {
+        // A sandboxed iframe, `data:` URL, or `file://` page on an attacker
+        // site emits `Origin: null`. The browser IS the loopback peer, so the
+        // peer-IP check alone does not help — `null` must not be treated as
+        // evidence of a local caller.
+        let tmp = tempfile::tempdir().unwrap();
+        let state = state_with_tempdir(&tmp);
+        let mut headers = HeaderMap::new();
+        headers.insert(ORIGIN, HeaderValue::from_static("null"));
+        let err = check_trust_boundary(loopback_peer(), &headers, &state)
+            .expect_err("sandboxed null Origin must be refused");
         assert_eq!(err.status(), StatusCode::FORBIDDEN);
     }
 
@@ -786,8 +804,6 @@ mod tests {
             "http://127.0.0.1:8080",
             "http://[::1]",
             "http://[::1]:8080",
-            "null",
-            "NULL",
         ] {
             assert!(is_loopback_origin(ok), "{ok} should classify as loopback");
         }
@@ -798,6 +814,8 @@ mod tests {
             "http://localhostess.example",
             "http://10.0.0.1",
             "http://[2001:db8::1]",
+            "null",
+            "NULL",
         ] {
             assert!(
                 !is_loopback_origin(not_ok),
