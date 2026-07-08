@@ -234,11 +234,11 @@ fn forwarding_marker(headers: &HeaderMap<HeaderValue>) -> Option<&str> {
 }
 
 /// True for `http(s)://localhost[:port]`, `http(s)://127.0.0.1[:port]`,
-/// `http(s)://[::1][:port]`, and the literal `null` (sandboxed contexts).
+/// `http(s)://[::1][:port]`. The literal `null` is intentionally refused:
+/// browsers emit it from sandboxed iframes, `data:` URLs, and `file://`
+/// pages regardless of which site hosts the sandbox, so it is not evidence
+/// of a local caller.
 fn is_loopback_origin(origin: &str) -> bool {
-    if origin.eq_ignore_ascii_case("null") {
-        return true;
-    }
     let after_scheme = origin
         .strip_prefix("http://")
         .or_else(|| origin.strip_prefix("https://"))
@@ -694,8 +694,6 @@ mod tests {
             .expect("localhost Origin must pass");
         headers.insert(ORIGIN, HeaderValue::from_static("http://[::1]:8080"));
         check_trust_boundary(loopback_peer(), &headers, &state).expect("[::1] Origin must pass");
-        headers.insert(ORIGIN, HeaderValue::from_static("null"));
-        check_trust_boundary(loopback_peer(), &headers, &state).expect("`null` Origin must pass");
     }
 
     #[test]
@@ -710,6 +708,21 @@ mod tests {
         headers.insert(ORIGIN, HeaderValue::from_static("https://evil.example.com"));
         let err = check_trust_boundary(loopback_peer(), &headers, &state)
             .expect_err("remote Origin must be refused");
+        assert_eq!(err.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn check_trust_boundary_blocks_sandboxed_null_origin() {
+        // A sandboxed iframe, `data:` URL, or `file://` page on an attacker
+        // site emits `Origin: null`. The browser IS the loopback peer, so the
+        // peer-IP check alone does not help — `null` must not be treated as
+        // evidence of a local caller.
+        let tmp = tempfile::tempdir().unwrap();
+        let state = state_with_tempdir(&tmp);
+        let mut headers = HeaderMap::new();
+        headers.insert(ORIGIN, HeaderValue::from_static("null"));
+        let err = check_trust_boundary(loopback_peer(), &headers, &state)
+            .expect_err("sandboxed null Origin must be refused");
         assert_eq!(err.status(), StatusCode::FORBIDDEN);
     }
 
@@ -788,8 +801,6 @@ mod tests {
             "http://127.0.0.1:8080",
             "http://[::1]",
             "http://[::1]:8080",
-            "null",
-            "NULL",
         ] {
             assert!(is_loopback_origin(ok), "{ok} should classify as loopback");
         }
@@ -800,6 +811,8 @@ mod tests {
             "http://localhostess.example",
             "http://10.0.0.1",
             "http://[2001:db8::1]",
+            "null",
+            "NULL",
         ] {
             assert!(
                 !is_loopback_origin(not_ok),

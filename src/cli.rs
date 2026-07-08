@@ -304,6 +304,12 @@ struct DemoUpArgs {
         conflicts_with = "verbose"
     )]
     quiet: bool,
+    #[arg(
+        long,
+        help_heading = "Optional options",
+        help = "Do not subscribe this runtime to its environment's update channel."
+    )]
+    no_updates: bool,
 }
 
 #[derive(Parser)]
@@ -2498,7 +2504,10 @@ impl DemoUpArgs {
             verbose: self.verbose,
             quiet: self.quiet,
             no_browser: false,
-            no_updates: false,
+            // Default (false) honours the environment's declared
+            // update-channel.json policy; the flag is a host-local kill
+            // switch, not a policy override.
+            no_updates: self.no_updates,
             admin: false,
             admin_port: 8443,
             admin_certs_dir: None,
@@ -7489,6 +7498,7 @@ mod tests {
             log_dir: None,
             verbose: false,
             quiet: false,
+            no_updates: false,
         };
 
         let request = args.to_start_request();
@@ -7498,6 +7508,44 @@ mod tests {
         assert_eq!(
             request.runner_binary.as_deref(),
             Some(Path::new("/tmp/runner"))
+        );
+    }
+
+    #[test]
+    fn demo_up_args_forward_no_updates_flag() {
+        let base = DemoUpArgs {
+            bundle: None,
+            tenant: None,
+            team: None,
+            no_nats: false,
+            nats: NatsModeArg::Off,
+            nats_url: None,
+            config: None,
+            cloudflared: CloudflaredModeArg::Off,
+            cloudflared_binary: None,
+            ngrok: NgrokModeArg::Off,
+            ngrok_binary: None,
+            restart: Vec::new(),
+            runner_binary: None,
+            log_dir: None,
+            verbose: false,
+            quiet: false,
+            no_updates: false,
+        };
+        let request = base.to_start_request();
+        assert!(
+            !request.no_updates,
+            "default must honour the environment's update channel"
+        );
+
+        let with_flag = DemoUpArgs {
+            no_updates: true,
+            ..base
+        };
+        let request = with_flag.to_start_request();
+        assert!(
+            request.no_updates,
+            "--no-updates must propagate to the start request"
         );
     }
 }
