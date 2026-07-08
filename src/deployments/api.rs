@@ -570,12 +570,14 @@ mod tests {
     #[tokio::test]
     async fn end_to_end_through_deployer_lib_returns_typed_error_envelope() {
         // Drives a full happy-path payload through `dispatch` → deployer
-        // library → `op_error_response`. The deployer's `audit_and_record`
-        // wrapper runs `authorize_local_only` first, which denies inside the
-        // sandboxed test environment (no local-actor signal), so we expect a
-        // 403 with the documented envelope. The point of the test is the
-        // round-trip: handler invoked the lib, got a typed `OpError`, mapped
-        // it to the right HTTP status, and serialized the documented body.
+        // library → `op_error_response`. Deployer 1.1.10 replaced the
+        // deny-first `authorize_local_only` with `authorize_local_owner`
+        // which always allows local-store callers. The closure then fails
+        // because the environment does not exist in the empty tempdir,
+        // producing `OpError::NotFound` → 404. The point of the test is
+        // the round-trip: handler invoked the lib, got a typed `OpError`,
+        // mapped it to the right HTTP status, and serialized the
+        // documented body.
         // ULIDs are Crockford Base32 (no I/L/O/U); use a real one so we
         // get past the ID-parse branch.
         let tmp = tempfile::tempdir().unwrap();
@@ -587,10 +589,10 @@ mod tests {
         }"#;
         let err = dispatch(Method::POST, "/deployments/stage", body, &state)
             .await
-            .expect_err("local-only auth denial must surface");
-        assert_eq!(err.status(), StatusCode::FORBIDDEN);
+            .expect_err("env-not-found must surface as typed error");
+        assert_eq!(err.status(), StatusCode::NOT_FOUND);
         let body = read_body_json(*err).await;
-        assert_eq!(body["error"]["kind"], "unauthorized");
+        assert_eq!(body["error"]["kind"], "not-found");
     }
 
     #[test]

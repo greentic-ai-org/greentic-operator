@@ -2498,6 +2498,7 @@ impl DemoUpArgs {
             verbose: self.verbose,
             quiet: self.quiet,
             no_browser: false,
+            no_updates: false,
             admin: false,
             admin_port: 8443,
             admin_certs_dir: None,
