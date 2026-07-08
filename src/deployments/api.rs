@@ -570,14 +570,17 @@ mod tests {
     #[tokio::test]
     async fn end_to_end_through_deployer_lib_returns_typed_error_envelope() {
         // Drives a full happy-path payload through `dispatch` → deployer
-        // library → `op_error_response`. Deployer 1.1.10 replaced the
-        // deny-first `authorize_local_only` with `authorize_local_owner`
-        // which always allows local-store callers. The closure then fails
-        // because the environment does not exist in the empty tempdir,
-        // producing `OpError::NotFound` → 404. The point of the test is
-        // the round-trip: handler invoked the lib, got a typed `OpError`,
-        // mapped it to the right HTTP status, and serialized the
-        // documented body.
+        // library → `op_error_response`. This crate's lockfile used to freeze
+        // on a develop-lane deployer whose deny-first `authorize_local_only`
+        // refused non-local env ids, so the assertion here was a 403. Every
+        // stable deployer since 1.1.0 uses `authorize_local_owner`, which
+        // allows local-store callers; the closure then fails because the
+        // environment does not exist in the empty tempdir, producing
+        // `OpError::NotFound` → 404. The point of the test is the round-trip:
+        // handler invoked the lib, got a typed `OpError`, mapped it to the
+        // right HTTP status, and serialized the documented body. Note this no
+        // longer covers the `unauthorized` → 403 mapping — nothing on this
+        // path denies any more.
         // ULIDs are Crockford Base32 (no I/L/O/U); use a real one so we
         // get past the ID-parse branch.
         let tmp = tempfile::tempdir().unwrap();

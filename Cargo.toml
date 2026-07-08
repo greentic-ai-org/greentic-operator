@@ -41,9 +41,17 @@ async-trait = "0.1"
 base64 = "0.22"
 chrono = "0.4"
 directories-next = "2"
-# Floor 0.1.26948183687: ExtensionBinding / ExtensionRef (Path 3 capability slot).
+# Must resolve to the SAME copy `greentic-deployer` pulls: `EnvId` / `Environment` /
+# `EnvironmentHostConfig` cross that boundary in `src/deployments/`, so two copies stop
+# unifying (E0308). Floor 0.2.2 rather than 0.2.0 is defensive: deployer 1.1.10 consumes
+# `UpdateAction` / `resolved_action()` (deploy-spec 0.2.2) while declaring only `"0.2"`,
+# so a `>=0.2.0` floor here lets a resolve pick 0.2.0 and the *deployer* fails to build.
+# Tracked upstream as greenticai/greentic-deployer#444.
 greentic-deploy-spec = ">=0.2.2, <0.3"
-# Floor 1.1.0-dev.26948183687: `op extensions` noun (compiled into this CLI via OpCommand).
+# Floor 1.1.10: `UpdatesVerb::Publish` — this CLI compiles the deployer's whole `OpCommand`
+# clap tree (`Command::Op` → `dispatch_op`), so `op updates publish` exists here only if the
+# deployer exports it. Absent in 1.1.9. The `-0` suffix is deliberately gone from every floor
+# in this file: a main-branch binary must never resolve a develop-lane pre-release.
 greentic-deployer = ">=1.1.10, <1.2.0-0"
 greentic-setup = ">=1.1.0, <1.2.0-0"
 greentic-qa-lib = ">=1.1.0, <1.2.0-0"

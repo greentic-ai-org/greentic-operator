@@ -7479,41 +7479,11 @@ mod tests {
         );
     }
 
-    #[test]
-    fn demo_up_args_map_runner_binary_into_start_request() {
-        let args = DemoUpArgs {
-            bundle: Some(PathBuf::from("./bundle")),
-            tenant: Some("demo".to_string()),
-            team: Some("default".to_string()),
-            no_nats: false,
-            nats: NatsModeArg::Off,
-            nats_url: None,
-            config: None,
-            cloudflared: CloudflaredModeArg::Off,
-            cloudflared_binary: None,
-            ngrok: NgrokModeArg::Off,
-            ngrok_binary: None,
-            restart: Vec::new(),
-            runner_binary: Some(PathBuf::from("/tmp/runner")),
-            log_dir: None,
-            verbose: false,
-            quiet: false,
-            no_updates: false,
-        };
-
-        let request = args.to_start_request();
-        assert_eq!(request.bundle.as_deref(), Some("./bundle"));
-        assert_eq!(request.tenant.as_deref(), Some("demo"));
-        assert_eq!(request.team.as_deref(), Some("default"));
-        assert_eq!(
-            request.runner_binary.as_deref(),
-            Some(Path::new("/tmp/runner"))
-        );
-    }
-
-    #[test]
-    fn demo_up_args_forward_no_updates_flag() {
-        let base = DemoUpArgs {
+    /// `DemoUpArgs` derives only `Parser`, so tests cannot reach for `Default`.
+    /// Every field left at its clap default lives here; each test overrides only
+    /// what it is actually asserting on.
+    fn base_demo_up_args() -> DemoUpArgs {
+        DemoUpArgs {
             bundle: None,
             tenant: None,
             team: None,
@@ -7531,7 +7501,32 @@ mod tests {
             verbose: false,
             quiet: false,
             no_updates: false,
+        }
+    }
+
+    #[test]
+    fn demo_up_args_map_runner_binary_into_start_request() {
+        let args = DemoUpArgs {
+            bundle: Some(PathBuf::from("./bundle")),
+            tenant: Some("demo".to_string()),
+            team: Some("default".to_string()),
+            runner_binary: Some(PathBuf::from("/tmp/runner")),
+            ..base_demo_up_args()
         };
+
+        let request = args.to_start_request();
+        assert_eq!(request.bundle.as_deref(), Some("./bundle"));
+        assert_eq!(request.tenant.as_deref(), Some("demo"));
+        assert_eq!(request.team.as_deref(), Some("default"));
+        assert_eq!(
+            request.runner_binary.as_deref(),
+            Some(Path::new("/tmp/runner"))
+        );
+    }
+
+    #[test]
+    fn demo_up_args_forward_no_updates_flag() {
+        let base = base_demo_up_args();
         let request = base.to_start_request();
         assert!(
             !request.no_updates,
