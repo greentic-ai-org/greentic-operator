@@ -55,10 +55,6 @@ greentic-deploy-spec = ">=0.2.2, <0.3"
 greentic-deployer = ">=1.1.11, <1.2.0-0"
 greentic-setup = ">=1.1.0, <1.2.0-0"
 greentic-qa-lib = ">=1.1.0, <1.2.0-0"
-# Floor 1.1.10, not 1.1.9: every publish below it pins `async-nats = "0.46"`, which
-# hard-pins `rustls-webpki = "0.102"`. The newest release on that line, 0.102.8, carries
-# GHSA-82j2-j2ch-gfr8 (high) and GHSA-pwjx-qhcg-rvj4, and no fixed 0.102.x exists --
-# async-nats only moved to the patched 0.103 line in 0.47.
 greentic-state = ">=1.1.0, <1.2.0-0"
 http-body-util = "0.1"
 hyper-util = "0.1"
@@ -113,7 +109,9 @@ version = ">=1.1.0, <1.2.0-0"
 # (constructed in src/demo/) first exist in 1.1.1, so 1.1.1 is the API floor — a fresh
 # resolve against 1.1.0 fails with E0063, which the lockfile hides and a `--locked`
 # consumer with a stale lock does not. 1.1.6 is the security floor: every publish below
-# it pins `async-nats = "0.46"` -> `rustls-webpki 0.102.8` (see the greentic-start note).
+# it pins `async-nats = "0.46"` -> `rustls-webpki 0.102.8`, which carries GHSA-82j2-j2ch-gfr8
+# (high) and GHSA-pwjx-qhcg-rvj4 with no fixed 0.102.x; async-nats only moved to the patched
+# 0.103 line in 0.47.
 [dependencies.greentic-runner-host]
 version = ">=1.1.6, <1.2.0-0"
 
