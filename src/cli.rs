@@ -99,10 +99,17 @@ struct DemoCommand {
 #[derive(Subcommand)]
 enum DemoSubcommand {
     Build(DemoBuildArgs),
+    // The runtime verbs are retired (see `demo_runtime_verb_removed`). They stay
+    // in the parser — and keep accepting their old flags — so a pasted legacy
+    // command reaches the stub and gets the migration message, rather than a
+    // bare clap "unexpected argument --nats".
     #[command(hide = true)]
     Up(DemoUpArgs),
+    #[command(about = "Removed — use `gtc start <bundle>` instead")]
     Start(DemoUpArgs),
+    #[command(about = "Removed — use `gtc start <bundle>` instead")]
     Restart(DemoUpArgs),
+    #[command(about = "Removed — use `gtc stop` instead")]
     Stop(DemoStopArgs),
     Setup(DemoSetupArgs),
     Send(DemoSendArgs),
@@ -7447,6 +7454,38 @@ mod tests {
             assert!(
                 message.contains("gtc start"),
                 "message must point at the replacement, got: {message}"
+            );
+        }
+    }
+
+    /// All four retired verbs must reach the stub. `Up` is `hide = true`, so it
+    /// is the one a `--help` sweep would miss — and it dispatches to the same
+    /// `run_start` as `Start` (cli.rs `DemoSubcommand::Up`).
+    #[test]
+    fn every_retired_verb_dispatches_to_the_stub() {
+        use clap::Parser;
+        for argv in [
+            vec!["greentic-operator", "demo", "up"],
+            vec!["greentic-operator", "demo", "start"],
+            vec!["greentic-operator", "demo", "restart"],
+            vec!["greentic-operator", "demo", "stop"],
+        ] {
+            let verb = argv[2];
+            let cli = Cli::try_parse_from(&argv).unwrap_or_else(|err| {
+                panic!(
+                    "`demo {verb}` must still PARSE (so the user gets the \
+                     migration message, not a clap error): {err}"
+                )
+            });
+            let Command::Demo(demo) = cli.command else {
+                panic!("`demo {verb}` did not parse as a demo subcommand");
+            };
+            let err = demo
+                .run(&AppCtx {})
+                .expect_err("`demo {verb}` must fail, not no-op");
+            assert!(
+                err.to_string().contains("gtc st"),
+                "`demo {verb}` must point at the replacement, got: {err}"
             );
         }
     }
