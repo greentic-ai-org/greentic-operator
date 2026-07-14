@@ -65,11 +65,6 @@ use greentic_qa_lib::{
     WizardRunConfig,
 };
 use greentic_runner_host::secrets::default_manager;
-use greentic_start::{
-    CloudflaredModeArg as StartCloudflaredModeArg, NatsModeArg as StartNatsModeArg,
-    NgrokModeArg as StartNgrokModeArg, RestartTarget as StartRestartTarget, StartRequest,
-    StopRequest, run_restart_request, run_start_request, run_stop_request,
-};
 use greentic_types::{ChannelMessageEnvelope, Destination, EnvId, TeamId, TenantCtx, TenantId};
 use std::time::Duration;
 use uuid::Uuid;
@@ -104,10 +99,17 @@ struct DemoCommand {
 #[derive(Subcommand)]
 enum DemoSubcommand {
     Build(DemoBuildArgs),
+    // The runtime verbs are retired (see `demo_runtime_verb_removed`). They stay
+    // in the parser — and keep accepting their old flags — so a pasted legacy
+    // command reaches the stub and gets the migration message, rather than a
+    // bare clap "unexpected argument --nats".
     #[command(hide = true)]
     Up(DemoUpArgs),
+    #[command(about = "Removed — use `gtc start <bundle>` instead")]
     Start(DemoUpArgs),
+    #[command(about = "Removed — use `gtc start <bundle>` instead")]
     Restart(DemoUpArgs),
+    #[command(about = "Removed — use `gtc stop` instead")]
     Stop(DemoStopArgs),
     Setup(DemoSetupArgs),
     Send(DemoSendArgs),
@@ -203,8 +205,10 @@ struct DemoBuildArgs {
 
 #[derive(Parser)]
 #[command(
-    about = "Start demo services from a bundle.",
-    long_about = "Delegates demo lifecycle execution to greentic-start using bundle/config runtime flags."
+    about = "Removed — use `gtc start <bundle>` instead",
+    long_about = "Removed. `gtc start <bundle>` provisions the environment, deploys the bundle into it \
+                  and serves it. The old flags are still accepted so a pasted legacy command reaches \
+                  this message instead of a clap parse error; they are ignored."
 )]
 struct DemoUpArgs {
     #[arg(
@@ -314,8 +318,10 @@ struct DemoUpArgs {
 
 #[derive(Parser)]
 #[command(
-    about = "Stop demo services from a bundle.",
-    long_about = "Stops demo lifecycle services using greentic-start library orchestration."
+    about = "Removed — use `gtc stop` instead",
+    long_about = "Removed. `gtc stop` tears down the environment started by `gtc start <bundle>`. \
+                  The old flags are still accepted so a pasted legacy command reaches this message \
+                  instead of a clap parse error; they are ignored."
 )]
 struct DemoStopArgs {
     #[arg(
@@ -2465,68 +2471,33 @@ impl DemoBuildArgs {
 
 impl DemoUpArgs {
     fn run_start(self, _ctx: &AppCtx) -> anyhow::Result<()> {
-        run_start_request(self.to_start_request())
+        anyhow::bail!(demo_runtime_verb_removed("start"))
     }
 
     fn run_restart(self, _ctx: &AppCtx) -> anyhow::Result<()> {
-        run_restart_request(self.to_start_request())
-    }
-
-    fn to_start_request(&self) -> StartRequest {
-        StartRequest {
-            bundle: self.bundle.as_ref().map(|path| path.display().to_string()),
-            // Demo verbs drive the legacy bundle path; the env-store boot
-            // source (greentic-start `--env`) is not part of the demo flow.
-            env: None,
-            tenant: self.tenant.clone(),
-            team: self.team.clone(),
-            no_nats: self.no_nats,
-            nats: match self.nats {
-                NatsModeArg::Off => StartNatsModeArg::Off,
-                NatsModeArg::On => StartNatsModeArg::On,
-                NatsModeArg::External => StartNatsModeArg::External,
-            },
-            nats_url: self.nats_url.clone(),
-            config: self.config.clone(),
-            cloudflared: match self.cloudflared {
-                CloudflaredModeArg::On => StartCloudflaredModeArg::On,
-                CloudflaredModeArg::Off => StartCloudflaredModeArg::Off,
-            },
-            cloudflared_binary: self.cloudflared_binary.clone(),
-            ngrok: match self.ngrok {
-                NgrokModeArg::On => StartNgrokModeArg::On,
-                NgrokModeArg::Off => StartNgrokModeArg::Off,
-            },
-            ngrok_binary: self.ngrok_binary.clone(),
-            runner_binary: self.runner_binary.clone(),
-            restart: self.restart.iter().map(map_restart_target).collect(),
-            log_dir: self.log_dir.clone(),
-            verbose: self.verbose,
-            quiet: self.quiet,
-            no_browser: false,
-            // Default (false) honours the environment's declared
-            // update-channel.json policy; the flag is a host-local kill
-            // switch, not a policy override.
-            no_updates: self.no_updates,
-            admin: false,
-            admin_port: 8443,
-            admin_certs_dir: None,
-            admin_allowed_clients: Vec::new(),
-            tunnel_explicit: false,
-        }
+        anyhow::bail!(demo_runtime_verb_removed("restart"))
     }
 }
 
 impl DemoStopArgs {
     fn run(self) -> anyhow::Result<()> {
-        run_stop_request(StopRequest {
-            bundle: self.bundle.map(|path| path.display().to_string()),
-            env: None,
-            state_dir: self.state_dir,
-            tenant: self.tenant,
-            team: self.team,
-        })
+        anyhow::bail!(demo_runtime_verb_removed("stop"))
     }
+}
+
+/// `op demo up|start|restart|stop` drove greentic-start's legacy `--bundle`
+/// runtime, which `gtc start <bundle>` replaces: it provisions the environment,
+/// deploys the bundle into it and serves it on the env/revision runtime. The
+/// legacy boot is being deleted from greentic-start, so these verbs cannot be
+/// kept working — they error with the migration path instead of failing with a
+/// link error once that lands.
+fn demo_runtime_verb_removed(verb: &str) -> String {
+    operator_i18n::trf(
+        "cli.demo.runtime_verb_removed",
+        "`demo {}` has been removed. Use `gtc start <bundle>` to provision the environment, \
+         deploy the bundle into it and serve it; `gtc stop` tears it down.",
+        &[verb],
+    )
 }
 
 const DEMO_DEFAULT_TENANT: &str = "demo";
@@ -5570,17 +5541,6 @@ fn write_if_missing(path: &Path, contents: &str) -> anyhow::Result<()> {
     fs::write(path, contents)?;
     Ok(())
 }
-fn map_restart_target(target: &RestartTarget) -> StartRestartTarget {
-    match target {
-        RestartTarget::All => StartRestartTarget::All,
-        RestartTarget::Cloudflared => StartRestartTarget::Cloudflared,
-        RestartTarget::Ngrok => StartRestartTarget::Ngrok,
-        RestartTarget::Nats => StartRestartTarget::Nats,
-        RestartTarget::Gateway => StartRestartTarget::Gateway,
-        RestartTarget::Egress => StartRestartTarget::Egress,
-        RestartTarget::Subscriptions => StartRestartTarget::Subscriptions,
-    }
-}
 
 impl DemoStatusArgs {
     fn run(self) -> anyhow::Result<()> {
@@ -7479,68 +7439,55 @@ mod tests {
         );
     }
 
-    /// `DemoUpArgs` derives only `Parser`, so tests cannot reach for `Default`.
-    /// Every field left at its clap default lives here; each test overrides only
-    /// what it is actually asserting on.
-    fn base_demo_up_args() -> DemoUpArgs {
-        DemoUpArgs {
-            bundle: None,
-            tenant: None,
-            team: None,
-            no_nats: false,
-            nats: NatsModeArg::Off,
-            nats_url: None,
-            config: None,
-            cloudflared: CloudflaredModeArg::Off,
-            cloudflared_binary: None,
-            ngrok: NgrokModeArg::Off,
-            ngrok_binary: None,
-            restart: Vec::new(),
-            runner_binary: None,
-            log_dir: None,
-            verbose: false,
-            quiet: false,
-            no_updates: false,
+    /// The demo runtime verbs used to hand a `StartRequest` to greentic-start's
+    /// legacy `--bundle` boot. That boot is being deleted, so the verbs now
+    /// error with the migration path. What is worth testing is that they DO
+    /// error (rather than silently no-op) and that the message names the
+    /// replacement — a stub that exits 0 would look like success to a script.
+    #[test]
+    fn demo_runtime_verbs_error_with_the_migration_path() {
+        for verb in ["start", "restart", "stop"] {
+            let message = demo_runtime_verb_removed(verb);
+            assert!(
+                message.contains(verb),
+                "message must name the verb the user typed, got: {message}"
+            );
+            assert!(
+                message.contains("gtc start"),
+                "message must point at the replacement, got: {message}"
+            );
         }
     }
 
+    /// All four retired verbs must reach the stub. `Up` is `hide = true`, so it
+    /// is the one a `--help` sweep would miss — and it dispatches to the same
+    /// `run_start` as `Start` (cli.rs `DemoSubcommand::Up`).
     #[test]
-    fn demo_up_args_map_runner_binary_into_start_request() {
-        let args = DemoUpArgs {
-            bundle: Some(PathBuf::from("./bundle")),
-            tenant: Some("demo".to_string()),
-            team: Some("default".to_string()),
-            runner_binary: Some(PathBuf::from("/tmp/runner")),
-            ..base_demo_up_args()
-        };
-
-        let request = args.to_start_request();
-        assert_eq!(request.bundle.as_deref(), Some("./bundle"));
-        assert_eq!(request.tenant.as_deref(), Some("demo"));
-        assert_eq!(request.team.as_deref(), Some("default"));
-        assert_eq!(
-            request.runner_binary.as_deref(),
-            Some(Path::new("/tmp/runner"))
-        );
-    }
-
-    #[test]
-    fn demo_up_args_forward_no_updates_flag() {
-        let base = base_demo_up_args();
-        let request = base.to_start_request();
-        assert!(
-            !request.no_updates,
-            "default must honour the environment's update channel"
-        );
-
-        let with_flag = DemoUpArgs {
-            no_updates: true,
-            ..base
-        };
-        let request = with_flag.to_start_request();
-        assert!(
-            request.no_updates,
-            "--no-updates must propagate to the start request"
-        );
+    fn every_retired_verb_dispatches_to_the_stub() {
+        use clap::Parser;
+        for argv in [
+            vec!["greentic-operator", "demo", "up"],
+            vec!["greentic-operator", "demo", "start"],
+            vec!["greentic-operator", "demo", "restart"],
+            vec!["greentic-operator", "demo", "stop"],
+        ] {
+            let verb = argv[2];
+            let cli = Cli::try_parse_from(&argv).unwrap_or_else(|err| {
+                panic!(
+                    "`demo {verb}` must still PARSE (so the user gets the \
+                     migration message, not a clap error): {err}"
+                )
+            });
+            let Command::Demo(demo) = cli.command else {
+                panic!("`demo {verb}` did not parse as a demo subcommand");
+            };
+            let err = demo
+                .run(&AppCtx {})
+                .expect_err("`demo {verb}` must fail, not no-op");
+            assert!(
+                err.to_string().contains("gtc st"),
+                "`demo {verb}` must point at the replacement, got: {err}"
+            );
+        }
     }
 }
