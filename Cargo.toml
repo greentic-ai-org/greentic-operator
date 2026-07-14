@@ -4,7 +4,7 @@ bin = [
 
 [package]
 name = "greentic-operator"
-version = "1.1.2"
+version = "1.1.3"
 edition = "2024"
 rust-version = "1.95"
 description = "Greentic operator CLI for local dev and demo orchestration."
@@ -60,7 +60,6 @@ greentic-qa-lib = ">=1.1.0, <1.2.0-0"
 # GHSA-82j2-j2ch-gfr8 (high) and GHSA-pwjx-qhcg-rvj4, and no fixed 0.102.x exists --
 # async-nats only moved to the patched 0.103 line in 0.47. 1.1.9 makes this crate's lock
 # fail Dependency Review.
-greentic-start = ">=1.1.10, <1.2.0-0"
 greentic-state = ">=1.1.0, <1.2.0-0"
 http-body-util = "0.1"
 hyper-util = "0.1"
