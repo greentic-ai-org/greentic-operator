@@ -58,8 +58,7 @@ greentic-qa-lib = ">=1.1.0, <1.2.0-0"
 # Floor 1.1.10, not 1.1.9: every publish below it pins `async-nats = "0.46"`, which
 # hard-pins `rustls-webpki = "0.102"`. The newest release on that line, 0.102.8, carries
 # GHSA-82j2-j2ch-gfr8 (high) and GHSA-pwjx-qhcg-rvj4, and no fixed 0.102.x exists --
-# async-nats only moved to the patched 0.103 line in 0.47. 1.1.9 makes this crate's lock
-# fail Dependency Review.
+# async-nats only moved to the patched 0.103 line in 0.47.
 greentic-state = ">=1.1.0, <1.2.0-0"
 http-body-util = "0.1"
 hyper-util = "0.1"

@@ -205,8 +205,10 @@ struct DemoBuildArgs {
 
 #[derive(Parser)]
 #[command(
-    about = "Start demo services from a bundle.",
-    long_about = "Delegates demo lifecycle execution to greentic-start using bundle/config runtime flags."
+    about = "Removed — use `gtc start <bundle>` instead",
+    long_about = "Removed. `gtc start <bundle>` provisions the environment, deploys the bundle into it \
+                  and serves it. The old flags are still accepted so a pasted legacy command reaches \
+                  this message instead of a clap parse error; they are ignored."
 )]
 struct DemoUpArgs {
     #[arg(
@@ -316,8 +318,10 @@ struct DemoUpArgs {
 
 #[derive(Parser)]
 #[command(
-    about = "Stop demo services from a bundle.",
-    long_about = "Stops demo lifecycle services using greentic-start library orchestration."
+    about = "Removed — use `gtc stop` instead",
+    long_about = "Removed. `gtc stop` tears down the environment started by `gtc start <bundle>`. \
+                  The old flags are still accepted so a pasted legacy command reaches this message \
+                  instead of a clap parse error; they are ignored."
 )]
 struct DemoStopArgs {
     #[arg(
@@ -7435,9 +7439,6 @@ mod tests {
         );
     }
 
-    /// `DemoUpArgs` derives only `Parser`, so tests cannot reach for `Default`.
-    /// Every field left at its clap default lives here; each test overrides only
-    /// what it is actually asserting on.
     /// The demo runtime verbs used to hand a `StartRequest` to greentic-start's
     /// legacy `--bundle` boot. That boot is being deleted, so the verbs now
     /// error with the migration path. What is worth testing is that they DO
@@ -7488,17 +7489,5 @@ mod tests {
                 "`demo {verb}` must point at the replacement, got: {err}"
             );
         }
-    }
-
-    #[test]
-    fn demo_stop_returns_err_rather_than_silently_succeeding() {
-        let args = DemoStopArgs {
-            bundle: None,
-            state_dir: None,
-            tenant: DEMO_DEFAULT_TENANT.to_string(),
-            team: DEMO_DEFAULT_TEAM.to_string(),
-        };
-        let err = args.run().expect_err("`demo stop` must fail, not no-op");
-        assert!(err.to_string().contains("gtc start"));
     }
 }
