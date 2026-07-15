@@ -161,7 +161,6 @@ impl DemoRunner {
             action: None,
             session_id: None,
             provider_id: None,
-            reply_scope: None,
             retry_config: host_config.retry_config().into(),
             attempt: 1,
             observer: None,
@@ -194,8 +193,6 @@ fn build_host_config(tenant: &str) -> HostConfig {
         validation: ValidationConfig::from_env(),
         operator_policy: OperatorPolicy::allow_all(),
         fast2flow: Default::default(),
-        agents: HashMap::new(),
-        graphs: HashMap::new(),
     }
 }
 
