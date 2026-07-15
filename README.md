@@ -12,12 +12,17 @@ gtc op demo new demo-bundle
 # drop packs into packs/
 gtc op demo setup --bundle demo-bundle --tenant default --team default
 gtc op demo build --bundle demo-bundle --tenant default --team default
-gtc op demo start --bundle demo-bundle --tenant default --team default
+gtc start demo-bundle
 ```
 
-`demo start` is the canonical, long-running invocation: it boots the demo services in the foreground and waits for **Ctrl+C** to trigger a clean shutdown sequence. Press **Ctrl+C** in the terminal running the command to stop the services.
+`gtc start <bundle>` is the canonical, long-running invocation: it creates the environment if none
+exists, deploys the bundle into it, and serves it in the foreground (with the webchat console on
+`/chat`). Press **Ctrl+C** to stop, or run `gtc stop` from another terminal.
 
-Lifecycle ownership note: `greentic-operator demo start|up|stop|restart` delegates runtime lifecycle execution to `greentic-start`. Bundle creation/wizard UX now belongs to `greentic-dev -> greentic-bundle`; `greentic-operator` stays on the operations path.
+**Removed: `demo start|up|restart|stop`.** They drove `greentic-start`'s legacy `--bundle` boot, which
+had no environment concept and no webchat console. `gtc start <bundle>` replaces them end to end, so
+the verbs now error with the migration path. Bundle creation/wizard UX belongs to
+`greentic-dev -> greentic-bundle`; `greentic-operator` stays on the operations path.
 
 Access mapping (.gmap)
 
@@ -42,14 +47,14 @@ Team rules override tenant rules.
 Demo bundles
 
 gtc op demo build --out demo-bundle --tenant tenant1 --team team1
-gtc op demo start --bundle demo-bundle --tenant tenant1 --team team1
+gtc start demo-bundle
 Note: demo bundles require CBOR-only packs (`manifest.cbor`). Rebuild packs with `greentic-pack build` (avoid `--dev`).
 
 ### allow/forbid commands
 
 There are two sets of gmap editing helpers:
 
-- `gtc op demo allow/forbid` is meant for portable bundles. Supply `--bundle <DIR>` plus `--tenant`/`--team` and pass the same `PACK[/FLOW[/NODE]]` path. The command rewrites the bundle’s gmap, reruns the resolver, and copies the updated `state/resolved/<tenant>[.<team>].yaml` into `resolved/`, so `demo start` immediately sees the change.
+- `gtc op demo allow/forbid` is meant for portable bundles. Supply `--bundle <DIR>` plus `--tenant`/`--team` and pass the same `PACK[/FLOW[/NODE]]` path. The command rewrites the bundle’s gmap, reruns the resolver, and copies the updated `state/resolved/<tenant>[.<team>].yaml` into `resolved/`, so the running bundle immediately sees the change.
 
 Paths must contain at most three segments. Passing `PACK/FLOW/NODE/EXTRA` (or relative paths with more than three parts) will trigger the “too many segments” error you saw. Stick to the `pack`, `pack/flow`, or `pack/flow/node` forms.
 
@@ -150,7 +155,7 @@ instead of relying on `cargo binstall` or `$PATH`:
 ```bash
 greentic-operator dev on --root /projects/ai/greenticai --profile debug
 greentic-operator dev detect --root /projects/ai/greenticai --profile debug --dry-run
-gtc op demo start --bundle demo-bundle --tenant default --team default
+gtc start demo-bundle
 gtc op demo doctor
 ```
 
@@ -179,6 +184,12 @@ appropriate equivalents on macOS/Windows). Use `greentic-operator dev status` to
 `greentic-operator dev off` to disable dev mode globally.
 
 ## Demo service config
+
+> **These three sections describe the retired `demo start|up|restart|stop` verbs** and the legacy
+> `greentic-start --bundle` runtime they drove. They are kept for reference while that runtime still
+> exists; it is being removed. Use `gtc start <bundle>` — it takes the same `--cloudflared` / `--ngrok`
+> tunnel flags.
+
 
 `gtc op demo start` delegates lifecycle execution to `greentic-start`, which reads the `services` section of `greentic.yaml` / `greentic.demo.yaml` to decide which gateway/egress/subscriptions components to launch. By default, demo start does **not** spawn local NATS (`--nats=off`), but you can opt into the legacy GSM NATS stack with `--nats=on` (this prints a warning) or attach to an external NATS server via `--nats=external --nats-url <URL>`.
 
