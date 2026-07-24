@@ -47,7 +47,11 @@ directories-next = "2"
 # `UpdateAction` / `resolved_action()` (deploy-spec 0.2.2) while declaring only `"0.2"`,
 # so a `>=0.2.0` floor here lets a resolve pick 0.2.0 and the *deployer* fails to build.
 # Tracked upstream as greenticai/greentic-deployer#444.
-greentic-deploy-spec = ">=0.2.5, <0.3"
+# Exact pin: a `<0.3` upper bound admits dev-lane `0.2.<RUN_ID>` publishes (e.g.
+# 0.2.29986812583), which drag in `greentic-types >=1.2.0-dev` and conflict with
+# this crate's stable types pin. An exact `=0.2.5` is the only form that excludes
+# those run-id versions while keeping both this crate and deployer on the same copy.
+greentic-deploy-spec = "=0.2.5"
 # Floor 1.1.28: embeds Vault flow (R2-2, 1.1.12), pack-list repair (1.1.14), and
 # provider-pack pin fix (1.1.15). Raised from 1.1.16 to 1.1.28 because deploy-spec
 # 0.2.5 makes `EnvironmentHostConfig` `#[non_exhaustive]`: every deployer below
