@@ -47,11 +47,16 @@ directories-next = "2"
 # `UpdateAction` / `resolved_action()` (deploy-spec 0.2.2) while declaring only `"0.2"`,
 # so a `>=0.2.0` floor here lets a resolve pick 0.2.0 and the *deployer* fails to build.
 # Tracked upstream as greenticai/greentic-deployer#444.
-greentic-deploy-spec = ">=0.2.3, <0.3"
-# Floor 1.1.16: embeds Vault flow (R2-2, 1.1.12), pack-list repair (1.1.14), and
-# provider-pack pin fix (1.1.15). The `-0` suffix is deliberately gone from every
-# floor in this file: a main-branch binary must never resolve a develop-lane pre-release.
-greentic-deployer = ">=1.1.16, <1.2.0-0"
+greentic-deploy-spec = ">=0.2.5, <0.3"
+# Floor 1.1.28: embeds Vault flow (R2-2, 1.1.12), pack-list repair (1.1.14), and
+# provider-pack pin fix (1.1.15). Raised from 1.1.16 to 1.1.28 because deploy-spec
+# 0.2.5 makes `EnvironmentHostConfig` `#[non_exhaustive]`: every deployer below
+# 1.1.28 struct-literals that type (25-26 sites), so an old deployer paired with a
+# fresh deploy-spec fails to compile (E0639) inside the registry copy. The two
+# floors move together — deploy-spec >=0.2.5 requires deployer >=1.1.28.
+# The `-0` suffix is deliberately gone from every floor in this file: a
+# main-branch binary must never resolve a develop-lane pre-release.
+greentic-deployer = ">=1.1.28, <1.2.0-0"
 greentic-setup = ">=1.1.0, <1.2.0-0"
 greentic-qa-lib = ">=1.1.0, <1.2.0-0"
 greentic-state = ">=1.1.0, <1.2.0-0"
