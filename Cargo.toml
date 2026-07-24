@@ -52,15 +52,17 @@ directories-next = "2"
 # this crate's stable types pin. An exact `=0.2.5` is the only form that excludes
 # those run-id versions while keeping both this crate and deployer on the same copy.
 greentic-deploy-spec = "=0.2.5"
-# Floor 1.1.28: embeds Vault flow (R2-2, 1.1.12), pack-list repair (1.1.14), and
-# provider-pack pin fix (1.1.15). Raised from 1.1.16 to 1.1.28 because deploy-spec
+# Floor 1.1.29: embeds Vault flow (R2-2, 1.1.12), pack-list repair (1.1.14), and
+# provider-pack pin fix (1.1.15). Raised from 1.1.16 because deploy-spec
 # 0.2.5 makes `EnvironmentHostConfig` `#[non_exhaustive]`: every deployer below
-# 1.1.28 struct-literals that type (25-26 sites), so an old deployer paired with a
+# 1.1.29 struct-literals that type (25-26 sites), so an old deployer paired with a
 # fresh deploy-spec fails to compile (E0639) inside the registry copy. The two
-# floors move together — deploy-spec >=0.2.5 requires deployer >=1.1.28.
+# floors move together — deploy-spec >=0.2.5 requires deployer >=1.1.29.
+# 1.1.29, not 1.1.28: main cut and published 1.1.28 from greentic-deployer#520
+# while this work was open, so that release still carries the literals.
 # The `-0` suffix is deliberately gone from every floor in this file: a
 # main-branch binary must never resolve a develop-lane pre-release.
-greentic-deployer = ">=1.1.28, <1.2.0-0"
+greentic-deployer = ">=1.1.29, <1.2.0-0"
 greentic-setup = ">=1.1.0, <1.2.0-0"
 greentic-qa-lib = ">=1.1.0, <1.2.0-0"
 greentic-state = ">=1.1.0, <1.2.0-0"
