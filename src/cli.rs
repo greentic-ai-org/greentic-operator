@@ -4659,7 +4659,7 @@ impl DemoSendArgs {
             provider_id: &self.provider,
             channel: &channel,
             card: card_payload.as_ref(),
-        });
+        })?;
         debug_print_envelope("initial message", &message);
 
         // Compose a message plan and encode payload directly against the provider component (no flow resolution).
@@ -6980,7 +6980,15 @@ struct DemoSendMessageArgs<'a> {
     card: Option<&'a JsonValue>,
 }
 
-fn build_demo_send_message(args: DemoSendMessageArgs<'_>) -> JsonValue {
+/// Build the outbound envelope for `demo send`.
+///
+/// Every identifier here used to be parsed with a silent fallback: an invalid
+/// `--tenant` became `demo`, an invalid `GREENTIC_ENV` became `local`, and an
+/// invalid `--team` was dropped entirely. The message then went out under an
+/// identity the caller never asked for, which is indistinguishable from success
+/// until you go looking for it in the wrong tenant. Parse failures are reported
+/// instead.
+fn build_demo_send_message(args: DemoSendMessageArgs<'_>) -> anyhow::Result<JsonValue> {
     let mut metadata = BTreeMap::new();
     if let Some(card_value) = args.card
         && let Ok(card_str) = serde_json::to_string(card_value)
@@ -6992,13 +7000,13 @@ fn build_demo_send_message(args: DemoSendMessageArgs<'_>) -> JsonValue {
     }
     let env_value = std::env::var("GREENTIC_ENV").unwrap_or_else(|_| "local".to_string());
     let env = EnvId::try_from(env_value.clone())
-        .unwrap_or_else(|_| EnvId::try_from("local").expect("local env invalid"));
+        .map_err(|err| anyhow::anyhow!("invalid GREENTIC_ENV `{env_value}`: {err}"))?;
     let tenant_id = TenantId::try_from(args.tenant.to_string())
-        .unwrap_or_else(|_| TenantId::try_from("demo").expect("demo tenant invalid"));
+        .map_err(|err| anyhow::anyhow!("invalid --tenant `{}`: {err}", args.tenant))?;
     let mut tenant_ctx = TenantCtx::new(env, tenant_id.clone());
-    if let Some(team_value) = args.team
-        && let Ok(team_id) = TeamId::try_from(team_value.to_string())
-    {
+    if let Some(team_value) = args.team {
+        let team_id = TeamId::try_from(team_value.to_string())
+            .map_err(|err| anyhow::anyhow!("invalid --team `{team_value}`: {err}"))?;
         tenant_ctx = tenant_ctx.with_team(Some(team_id));
     }
     tenant_ctx = tenant_ctx
@@ -7031,7 +7039,7 @@ fn build_demo_send_message(args: DemoSendMessageArgs<'_>) -> JsonValue {
         metadata,
         extensions: BTreeMap::new(),
     };
-    serde_json::to_value(envelope).unwrap_or(JsonValue::Null)
+    serde_json::to_value(envelope).context("failed to serialize the outbound envelope")
 }
 
 fn debug_print_envelope(op_label: &str, envelope: &JsonValue) {
@@ -7248,6 +7256,58 @@ impl From<DomainArg> for Domain {
 mod tests {
     use super::*;
     use std::{collections::BTreeSet, path::PathBuf};
+
+    fn send_args<'a>(tenant: &'a str, team: Option<&'a str>) -> DemoSendMessageArgs<'a> {
+        static NO_ARGS: std::sync::LazyLock<JsonMap<String, JsonValue>> =
+            std::sync::LazyLock::new(JsonMap::new);
+        DemoSendMessageArgs {
+            text: Some("hi"),
+            args: &NO_ARGS,
+            tenant,
+            team,
+            destinations: &[],
+            to_kind: None,
+            provider_id: "telegram",
+            channel: "telegram",
+            card: None,
+        }
+    }
+
+    #[test]
+    fn send_message_reports_an_invalid_tenant_instead_of_using_demo() {
+        // `acme corp` fails `validate_identifier` (space). It used to be
+        // swallowed and replaced with `demo`, so the message went out under a
+        // tenant the caller never named.
+        let err = build_demo_send_message(send_args("acme corp", None))
+            .expect_err("an unparseable tenant must not fall back to `demo`");
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("--tenant") && rendered.contains("acme corp"),
+            "error must name the flag and the rejected value, got: {rendered}"
+        );
+        assert!(
+            !rendered.contains("demo"),
+            "error must not mention a substituted tenant, got: {rendered}"
+        );
+    }
+
+    #[test]
+    fn send_message_reports_an_invalid_team_instead_of_dropping_it() {
+        let err = build_demo_send_message(send_args("acme", Some("ops team")))
+            .expect_err("an unparseable team must not be silently dropped");
+        assert!(
+            err.to_string().contains("--team"),
+            "error must name the flag, got: {err}"
+        );
+    }
+
+    #[test]
+    fn send_message_keeps_the_tenant_and_team_it_was_given() {
+        let envelope = build_demo_send_message(send_args("acme", Some("ops")))
+            .expect("valid identifiers must build an envelope");
+        assert_eq!(envelope["tenant"]["tenant_id"], JsonValue::from("acme"));
+        assert_eq!(envelope["tenant"]["team_id"], JsonValue::from("ops"));
+    }
 
     #[test]
     fn parse_kv_infers_basic_types() {
