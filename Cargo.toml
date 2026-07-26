@@ -4,7 +4,7 @@ bin = [
 
 [package]
 name = "greentic-operator"
-version = "1.1.4"
+version = "1.1.5"
 edition = "2024"
 rust-version = "1.95"
 description = "Greentic operator CLI for local dev and demo orchestration."
@@ -49,9 +49,19 @@ directories-next = "2"
 # Tracked upstream as greenticai/greentic-deployer#444.
 # Exact pin: a `<0.3` upper bound admits dev-lane `0.2.<RUN_ID>` publishes (e.g.
 # 0.2.29986812583), which drag in `greentic-types >=1.2.0-dev` and conflict with
-# this crate's stable types pin. An exact `=0.2.5` is the only form that excludes
+# this crate's stable types pin. An exact pin is the only form that excludes
 # those run-id versions while keeping both this crate and deployer on the same copy.
-greentic-deploy-spec = "=0.2.5"
+# crates.io's `max_stable_version` for this crate currently REPORTS a run-id build
+# (0.2.30193933262), so read the version list, never max_stable, when raising it.
+# 0.2.6, not 0.2.5: 0.2.6 adds `UpdateHostConfig::default_bundle`
+# (`FieldUpdate<BundleId>`) and its `apply_to`, which is the settable half of
+# greentic-deployer#521. The pin is what actually gates it — with `=0.2.5` here,
+# the `>=1.1.29` deployer range below resolves to 1.1.29 (1.1.30 requires
+# `=0.2.6`), so `op env apply` shipped an env-manifest parser with no
+# `default_bundle` field and hard-failed `answers-parse: unknown field
+# 'default_bundle'` on any manifest that used it. `gtc op` routes here, so that
+# was the whole `gtc` porcelain, not just this binary.
+greentic-deploy-spec = "=0.2.6"
 # Floor 1.1.29: embeds Vault flow (R2-2, 1.1.12), pack-list repair (1.1.14), and
 # provider-pack pin fix (1.1.15). Raised from 1.1.16 because deploy-spec
 # 0.2.5 makes `EnvironmentHostConfig` `#[non_exhaustive]`: every deployer below
@@ -60,9 +70,13 @@ greentic-deploy-spec = "=0.2.5"
 # floors move together — deploy-spec >=0.2.5 requires deployer >=1.1.29.
 # 1.1.29, not 1.1.28: main cut and published 1.1.28 from greentic-deployer#520
 # while this work was open, so that release still carries the literals.
+# Raised to 1.1.30 together with the deploy-spec pin above — the two floors move
+# as a pair, and 1.1.30 is the first publish that declares `=0.2.6`. It is also
+# the release that carries `ManifestEnvironment::default_bundle`, so this floor is
+# an API floor for `op env apply`, not housekeeping.
 # The `-0` suffix is deliberately gone from every floor in this file: a
 # main-branch binary must never resolve a develop-lane pre-release.
-greentic-deployer = ">=1.1.29, <1.2.0-0"
+greentic-deployer = ">=1.1.30, <1.2.0-0"
 greentic-setup = ">=1.1.0, <1.2.0-0"
 greentic-qa-lib = ">=1.1.0, <1.2.0-0"
 greentic-state = ">=1.1.0, <1.2.0-0"
