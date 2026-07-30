@@ -46,21 +46,14 @@ directories-next = "2"
 # `src/deployments/`, so two copies stop unifying (E0308). deploy-spec is 0.x, so
 # cargo treats 0.1 and 0.2 as incompatible and will happily keep both.
 #
-# This was ">=0.1.26948183687, <0.2" (floored for ExtensionBinding / ExtensionRef,
-# the Path 3 capability slot) while `greentic-deployer >=1.2.0-dev` below is built
-# against deploy-spec 0.2 — a contradiction that forked the lock and kept the
-# nightly lock PR red with E0308 in src/deployments/api.rs. The 0.2 line carries
-# ExtensionBinding / ExtensionRef unchanged, so the Path 3 floor is preserved.
-# main was never affected: it has been on 0.2 throughout, and the 07-15
-# forward-port merge reverted this line to develop's stale 0.1 side.
-#
-# Floor 0.2.3 rather than 0.2.0 is defensive: deployer consumes `UpdateAction` /
-# `resolved_action()` (deploy-spec 0.2.2) while declaring only `"0.2"`, so a
-# `>=0.2.0` floor here lets a resolve pick 0.2.0 and the *deployer* fails to build.
-# Tracked upstream as greenticai/greentic-deployer#444. The dev lane publishes
-# 0.2.<runid>, which this range already admits — do not rewrite it into a
-# ">=1.2.0-dev"-style lane range.
-greentic-deploy-spec = ">=0.2.3, <0.3"
+# Floor raised from 0.2.3 to 0.2.6 by forward-port (main carries =0.2.6 as an
+# exact pin for stable-lane isolation; develop keeps the open range because
+# dev-lane publishes are 0.2.<runid> and must resolve). 0.2.6 adds
+# `UpdateHostConfig::default_bundle` (`FieldUpdate<BundleId>`) and its `apply_to`
+# (greentic-deployer#521). The dev lane publishes 0.2.<runid>, which this range
+# already admits — do not rewrite it into a ">=1.2.0-dev"-style lane range.
+# Tracked upstream as greenticai/greentic-deployer#444.
+greentic-deploy-spec = ">=0.2.6, <0.3"
 # Floor 1.1.0-dev.26948183687: `op extensions` noun (compiled into this CLI via OpCommand).
 greentic-deployer = ">=1.2.0-dev, <1.3.0-0"
 greentic-setup = ">=1.2.0-dev, <1.3.0-0"
